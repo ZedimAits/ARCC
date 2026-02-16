@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+			"name": "Run Compiler",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceFolder}/zig-out/bin/starmont_client",
+			"preLaunchTask": "build",
+			"args": [],
+     		"cwd": "${workspaceFolder}",
+		},
+    ]
+}
