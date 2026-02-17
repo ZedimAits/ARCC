@@ -15,11 +15,10 @@ ARCC is a compiler collection that maps multiple frontends into a shared IR pipe
 - Each frontend produces tokenstream, AST, then *high-level IR (HLIR)*.
 - HLIRs are lowered into a universal MLIR.
 - MLIR can be lowered into *low-level IR (LLIR)*, LLVM bitcode or C code.
-- LLIR can be lowered to a native maschine instructions.
-- LLIR targets include x86_64, aarch64 and riscv.
+- LLIR can be lowered to a native maschine instructions (x86_64, aarch64 and riscv).
 - Alternatively LLIR can be executed directly by an interpreter.
 
-<img width="741" height="1331" alt="ARCC block diagram" src="https://github.com/user-attachments/assets/315043ba-8c37-438f-b107-01c5c61b1aa9" />
+<img width="621" height="1371" alt="architecture" src="https://github.com/user-attachments/assets/8bab2a18-1422-43e2-9cba-ba91930d780b" />
 
 ## Using ARCC
 
