@@ -5,11 +5,30 @@ const Interner = @import("../core/interner.zig").Interner;
 pub const Lexicon = struct {
 
     // ############################## TOKEN ##############################
+    pub const TokenKind = union(enum) {
+        keyword: Keyword,
+        symbol: Symbol,
+        literal: LiteralKind,
+        identifier,
+        eof,
+    };
+
     pub const Token = union(enum) {
         symbol: Symbol,
         literal: Literal,
         keyword: Keyword,
         identifier: core.Identifier,
+        eof,
+
+        pub fn toType(self: Token) TokenKind {
+            return switch (self) {
+                .symbol => |s| .{ .symbol = s },
+                .literal => |lit| .{ .literal = lit.kind },
+                .keyword => |k| .{ .keyword = k },
+                .identifier => .identifier,
+                .eof => .eof,
+            };
+        }
 
         pub fn print(self: Token, interner: *Interner) void {
             switch (self) {
