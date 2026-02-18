@@ -10,21 +10,30 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
-#include <stdint.h>
+const std = @import("std");
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-extern int32_t arcc_main(void);
-
-#ifdef __cplusplus
+export fn host_stdin_fd() i32 {
+    return 0;
 }
-#endif
 
-int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+export fn host_stdout_fd() i32 {
+    return 1;
+}
 
-    return (int)arcc_main();
+export fn host_stderr_fd() i32 {
+    return 2;
+}
+
+export fn host_write(fd: i32, buf: [*]const u8, len: i32) i32 {
+    const slice = buf[0..@intCast(len)];
+    return @intCast(std.posix.write(fd, slice) catch -1);
+}
+
+export fn host_malloc(size: usize) ?*u8 {
+    return std.heap.c_allocator.alloc(u8, size) catch null;
+}
+
+export fn host_free(ptr: ?*u8) void {
+    if (ptr) |p|
+        std.heap.c_allocator.free(p[0..0]);
 }
