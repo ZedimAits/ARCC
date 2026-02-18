@@ -10,31 +10,21 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
-const std = @import("std");
+#include <stdint.h>
 
-const core = @import("../core.zig");
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-pub const NodeID = u32;
+extern int32_t arcc_main(void);
 
-pub fn ASTTree(comptime Node: type) type {
-    return struct {
-        const Self = @This();
+#ifdef __cplusplus
+}
+#endif
 
-        gpa: std.mem.Allocator,
-        nodes: std.ArrayListUnmanaged(Node) = .{},
+int main(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
 
-        pub const NodeId = u32;
-
-        pub fn add(self: *Self, n: Node) !NodeId {
-            const id: NodeId = @intCast(self.nodes.items.len);
-            try self.nodes.append(self.gpa, n);
-            return id;
-        }
-
-        pub fn get(self: *const Self, id: NodeId) *const Node {
-            const idx: usize = @intCast(id);
-            std.debug.assert(idx < self.nodes.items.len);
-            return &self.nodes.items[idx];
-        }
-    };
+    return (int)arcc_main();
 }
