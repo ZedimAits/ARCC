@@ -5,43 +5,13 @@ const Interner = @import("../core/interner.zig").Interner;
 pub const Lexicon = struct {
 
     // ############################## TOKEN ##############################
-    pub const TokenKind = union(enum) {
-        keyword: Keyword,
-        symbol: Symbol,
-        literal: LiteralKind,
-        identifier,
-        eof,
-    };
 
     pub const Token = union(enum) {
         symbol: Symbol,
-        literal: Literal,
         keyword: Keyword,
-        identifier: core.Identifier,
+        literal: core.LiteralID,
+        identifier: core.IdentifierID,
         eof,
-
-        pub fn toType(self: Token) TokenKind {
-            return switch (self) {
-                .symbol => |s| .{ .symbol = s },
-                .literal => |lit| .{ .literal = lit.kind },
-                .keyword => |k| .{ .keyword = k },
-                .identifier => .identifier,
-                .eof => .eof,
-            };
-        }
-
-        pub fn print(self: Token, interner: *Interner) void {
-            switch (self) {
-                .keyword => |k| std.debug.print("{s} ", .{k.text()}),
-                .symbol => |s| std.debug.print("{s} ", .{s.text()}),
-                .identifier => |id| {
-                    std.debug.print("#{s} ", .{interner.get(id) orelse @panic("unknown identifier id")});
-                },
-                .literal => |lit| {
-                    std.debug.print("{s} ", .{lit.lexeme});
-                },
-            }
-        }
     };
 
     // ############################## KEYWORD ##############################
@@ -126,28 +96,19 @@ pub const Lexicon = struct {
     };
 
     // ############################## LITERAL ##############################
-    pub const LiteralKind = enum {
-        int,
+    pub const LiteralForm = enum {
+        dec_int,
+        hex_int,
+        bin_int,
         float,
         string,
+        raw_string,
         char,
         bool,
         null,
-
-        fn text(self: LiteralKind) []const u8 {
-            for (literals) |l| {
-                if (l.kind == self) return l.text;
-            }
-            unreachable;
-        }
     };
 
-    pub const Literal = struct {
-        kind: LiteralKind,
-        lexeme: []const u8,
-    };
-
-    pub const literals = [_]core.LiteralSpec(LiteralKind){
+    pub const literals = [_]core.L(core.Literal){
         .{
             .text = "bool",
             .kind = .bool,

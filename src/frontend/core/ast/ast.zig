@@ -1,3 +1,4 @@
+
 // ─────────────────────────────────────────────────────────────────────
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -8,24 +9,31 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
-pub const Span = struct {
-    source_id: u32,
-    start: usize,
-    end: usize,
-};
+const std = @import("std");
 
-pub fn Spanned(comptime T: type) type {
+const core = @import("../core.zig");
+
+pub const NodeID = u32;
+
+pub fn ASTTree(comptime Node: type) type {
     return struct {
-        span: Span,
-        value: T,
-
         const Self = @This();
 
-        pub fn init(start: usize, end: usize, value: T) Self {
-            return .{
-                .span = .{ .source_id = 0, .start = start, .end = end },
-                .value = value,
-            };
+        gpa: std.mem.Allocator,
+        nodes: std.ArrayListUnmanaged(Node) = .{},
+
+        pub const NodeId = u32;
+
+        pub fn add(self: *Self, n: Node) !NodeId {
+            const id: NodeId = @intCast(self.nodes.items.len);
+            try self.nodes.append(self.gpa, n);
+            return id;
+        }
+
+        pub fn get(self: *const Self, id: NodeId) *const Node {
+            const idx: usize = @intCast(id);
+            std.debug.assert(idx < self.nodes.items.len);
+            return &self.nodes.items[idx];
         }
     };
 }

@@ -8,24 +8,15 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
-pub const Span = struct {
-    source_id: u32,
-    start: usize,
-    end: usize,
-};
+pub const LiteralID = struct { value: u32 };
+pub const IdentifierID = struct { value: u32 };
 
-pub fn Spanned(comptime T: type) type {
-    return struct {
-        span: Span,
-        value: T,
+const literal = @import("literal.zig");
+pub const Literal = literal.Literal;
+pub const LiteralTag = literal.LiteralTag;
 
-        const Self = @This();
+const ast = @import("./ast/ast.zig");
+pub const ASTTree = ast.ASTTree;
+pub const NodeID = ast.NodeID;
 
-        pub fn init(start: usize, end: usize, value: T) Self {
-            return .{
-                .span = .{ .source_id = 0, .start = start, .end = end },
-                .value = value,
-            };
-        }
-    };
-}
+pub const nodes = @import("./ast/nodes.zig");

@@ -8,24 +8,31 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
-pub const Span = struct {
-    source_id: u32,
-    start: usize,
-    end: usize,
+pub const LiteralTag = enum {
+    int,
+    float,
+    bool,
+    string,
+    char,
+    null,
 };
 
-pub fn Spanned(comptime T: type) type {
-    return struct {
-        span: Span,
-        value: T,
+pub const Literal = union(LiteralTag) {
+    int: Int,
+    float: Float,
+    bool: bool,
+    string: []const u8,
+    char: u32,
+    null: void,
+};
 
-        const Self = @This();
+pub const Int = struct {
+    signed: bool,
+    bits: u16,     // 8,16,32,64,128,...
+    value: u128,
+};
 
-        pub fn init(start: usize, end: usize, value: T) Self {
-            return .{
-                .span = .{ .source_id = 0, .start = start, .end = end },
-                .value = value,
-            };
-        }
-    };
-}
+pub const Float = struct {
+    bits: u16,     // 16,32,64,128
+    value: f64,    // canonical storage
+};

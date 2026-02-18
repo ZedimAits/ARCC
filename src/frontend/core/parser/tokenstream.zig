@@ -2,7 +2,6 @@ const std = @import("std");
 
 pub fn TokenStream(comptime L: type) type {
     const Token = L.SpannedToken;
-    const TokenKind = L.TokenKind;
 
     return struct {
         lexer: *L,
@@ -25,17 +24,17 @@ pub fn TokenStream(comptime L: type) type {
             }
         }
 
-        pub fn peek(self: *@This()) TokenKind {
+        pub fn peek(self: *@This()) Token {
             self.fill(self.pos);
             return self.buf.items[self.pos];
         }
 
-        pub fn peekN(self: *@This(), n: usize) TokenKind {
+        pub fn peekN(self: *@This(), n: usize) Token {
             self.fill(self.pos + n);
             return self.buf.items[self.pos + n];
         }
 
-        pub fn advance(self: *@This()) TokenKind {
+        pub fn advance(self: *@This()) Token {
             const t = self.peek();
             self.pos += 1;
             return t;
@@ -56,7 +55,7 @@ pub fn TokenStream(comptime L: type) type {
             return false;
         }
 
-        pub fn match(self: *@This(), k: TokenKind) bool {
+        pub fn match(self: *@This(), k: Token) bool {
             if (self.peek().kind() == k) {
                 _ = self.advance();
                 return true;
@@ -64,7 +63,7 @@ pub fn TokenStream(comptime L: type) type {
             return false;
         }
 
-        pub fn expect(self: *@This(), k: TokenKind) !Token {
+        pub fn expect(self: *@This(), k: Token) !Token {
             if (self.peek().kind() == k)
                 return self.advance();
             return error.UnexpectedToken;
