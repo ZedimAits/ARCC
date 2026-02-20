@@ -10,9 +10,11 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
+const LexerError = @import("../lexer/lexer.zig").LexerError;
 
-
-
+pub const ParseError = error{
+    SyntaxError,
+} || LexerError;
 
 //
 //

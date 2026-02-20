@@ -10,11 +10,9 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
-const std = @import("std");
+const core = @import("../front.zig");
 
-const core = @import("../core.zig");
-
-const NodeID = @import("ast.zig").NodeID;
+const NodeID = @import("ast.zig").ASTNodeID;
 
 pub fn BinaryNode(comptime Op: type) type {
     return struct {
@@ -55,12 +53,14 @@ pub const For = struct {
 };
 
 pub const Block = struct {
-    statements: []NodeID,
+    start: NodeID,
+    count: usize,
 };
 
 pub const Call = struct {
     callee: NodeID,
-    args: []NodeID,
+    start: NodeID,
+    count: usize,
 };
 
 pub const Assign = struct {

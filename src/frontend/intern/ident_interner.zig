@@ -12,20 +12,20 @@
 
 const std = @import("std");
 
-const core = @import("../core.zig");
+const core = @import("../front.zig");
 
 /// Identifier interning
-pub const Interner = struct {
+pub const IdentInterner = struct {
     gpa: std.mem.Allocator,
 
     map: std.StringHashMapUnmanaged(core.IdentifierID) = .{},
     strings: std.ArrayListUnmanaged([]const u8) = .{},
 
-    pub fn init(gpa: std.mem.Allocator) Interner {
+    pub fn init(gpa: std.mem.Allocator) IdentInterner {
         return .{ .gpa = gpa };
     }
 
-    pub fn deinit(self: *Interner) void {
+    pub fn deinit(self: *IdentInterner) void {
         for (self.strings.items) |s| self.gpa.free(s);
 
         self.strings.deinit(self.gpa);
@@ -34,15 +34,15 @@ pub const Interner = struct {
 
     /// Intern `name` and return its ID.
     /// The returned ID is stable for the lifetime of this interner.
-    pub fn intern(self: *Interner, name: []const u8) !core.IdentifierID {
+    pub fn intern(self: *IdentInterner, name: []const u8) !core.IdentifierID {
         // already interned.
         if (self.map.get(name)) |id| return id;
 
         const owned = try self.gpa.dupe(u8, name);
         errdefer self.gpa.free(owned);
 
-        const id: core.IdentifierID = @intCast(self.strings.items.len);
-        if (id == std.math.maxInt(core.IdentifierID)) {
+        const id: core.IdentifierID = .{ .value = @intCast(self.strings.items.len) };
+        if (id.value == std.math.maxInt(u32)) {
             return error.TooManyIdentifiers;
         }
         try self.strings.append(self.gpa, owned);
@@ -57,22 +57,22 @@ pub const Interner = struct {
     }
 
     /// Look up an already-interned name. Returns null if not interned.
-    pub fn lookup(self: *const Interner, name: []const u8) ?core.IdentifierID {
+    pub fn lookup(self: *const IdentInterner, name: []const u8) ?core.IdentifierID {
         return self.map.get(name);
     }
 
     /// Resolve an ID back to the canonical string.
-    pub fn get(self: *const Interner, id: core.IdentifierID) ?[]const u8 {
-        if (id >= self.strings.items.len) return null;
+    pub fn get(self: *const IdentInterner, id: core.IdentifierID) ?[]const u8 {
+        if (id.value >= self.strings.items.len) return null;
 
-        return self.strings.items[@intCast(id)];
+        return self.strings.items[@intCast(id.value)];
     }
 
-    pub fn count(self: *const Interner) usize {
+    pub fn count(self: *const IdentInterner) usize {
         return self.strings.items.len;
     }
 
-    pub fn reserve(self: *Interner, n: usize) !void {
+    pub fn reserve(self: *IdentInterner, n: usize) !void {
         try self.strings.ensureTotalCapacity(self.gpa, n);
         try self.map.ensureTotalCapacity(self.gpa, n);
     }

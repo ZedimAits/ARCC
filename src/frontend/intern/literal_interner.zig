@@ -11,13 +11,11 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const std = @import("std");
-const core = @import("../core.zig");
+const core = @import("../front.zig");
 
 /// Interns canonical semantic literal values and returns stable LiteralId handles.
 /// Owns storage for string payloads.
 pub const LiteralInterner = struct {
-    gpa: std.mem.Allocator,
-
     const Context = struct {
         pub fn hash(_: @This(), k: core.Literal) u64 {
             var h = std.hash.Wyhash.init(0);
@@ -52,9 +50,7 @@ pub const LiteralInterner = struct {
             return switch (a) {
                 .int => |v| {
                     const w = b.int;
-                    return v.signed == w.signed
-                        and v.bits == w.bits
-                        and v.value == w.value;
+                    return v.signed == w.signed and v.bits == w.bits and v.value == w.value;
                 },
                 .float => |v| {
                     const w = b.float;
@@ -71,7 +67,9 @@ pub const LiteralInterner = struct {
         }
     };
 
-    map: std.HashMapUnmanaged(core.Literal, core.LiteralId, Context, 80) = .{},
+    gpa: std.mem.Allocator,
+
+    map: std.HashMapUnmanaged(core.Literal, core.LiteralID, Context, 80) = .{},
     values: std.ArrayListUnmanaged(core.Literal) = .{},
 
     pub fn init(gpa: std.mem.Allocator) LiteralInterner {
@@ -115,8 +113,8 @@ pub const LiteralInterner = struct {
             else => {},
         }
 
-        const id: core.LiteralID = @intCast(self.values.items.len);
-        if (id == std.math.maxInt(core.LiteralID))
+        const id: core.LiteralID = .{ .value = @intCast(self.values.items.len) };
+        if (id.value == std.math.maxInt(u32))
             return error.TooManyLiterals;
 
         try self.values.append(self.gpa, stored);
@@ -127,7 +125,7 @@ pub const LiteralInterner = struct {
     }
 
     pub fn get(self: *const LiteralInterner, id: core.LiteralID) ?core.Literal {
-        if (id >= self.values.items.len) return null;
-        return self.values.items[@intCast(id)];
+        if (id.value >= self.values.items.len) return null;
+        return self.values.items[@intCast(id.value)];
     }
 };

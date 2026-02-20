@@ -10,31 +10,16 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
-pub const LiteralTag = enum {
-    int,
-    float,
-    bool,
-    string,
-    char,
-    null,
-};
+const core = @import("../../frontend/front.zig");
 
-pub const Literal = union(LiteralTag) {
-    int: Int,
-    float: Float,
-    bool: bool,
-    string: []const u8,
-    char: u32,
-    null: void,
-};
+const Lexicon = @import("lexicon.zig").Lexicon;
+pub const Token = Lexicon.Token;
 
-pub const Int = struct {
-    signed: bool,
-    bits: u16, // 8,16,32,64,128,...
-    value: u128,
-};
+pub const ASTPrintResolver = core.ASTPrintResolver;
 
-pub const Float = struct {
-    bits: u16, // 16,32,64,128
-    value: f64, // canonical storage
-};
+pub const ASTNode = @import("ast.zig").ASTNode;
+const ASTTree = core.ASTTree(ASTNode);
+pub const Lexer = core.Lexer(Lexicon);
+
+pub const TokenStream = core.TokenStream(Lexer);
+pub const Parser = @import("parser.zig").Parser;

@@ -11,8 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const std = @import("std");
-const core = @import("../core/core.zig");
-const Interner = @import("../core/interner.zig").Interner;
+const core = @import("../../frontend/front.zig");
 
 pub const Lexicon = struct {
 
@@ -120,13 +119,13 @@ pub const Lexicon = struct {
         null,
     };
 
-    pub const literals = [_]core.L(core.Literal){
-        .{
-            .text = "bool",
-            .kind = .bool,
-            .start = .{ .any_of = &.{ "true", "false" } },
-            .body = .{ .exact = {} },
-        },
+    pub const literals = [_]core.LiteralRule(core.LiteralTag){
+        //.{
+        //    .text = "bool",
+        //    .kind = .bool,
+        //    .start = .{ .any_of = &.{ "true", "false" } },
+        //    .body = .{ .exact = {} },
+        //},
 
         .{
             .text = "decimal integer",
@@ -136,46 +135,46 @@ pub const Lexicon = struct {
             },
         },
 
-        .{
-            .text = "hex integer",
-            .kind = .int,
-            .start = .{ .any_of = &.{ "0x", "0X" } },
-            .body = .{
-                .number = .{ .base = 16 },
-            },
-        },
-
-        .{
-            .text = "binary integer",
-            .kind = .int,
-            .start = .{ .any_of = &.{ "0b", "0B" } },
-            .body = .{
-                .number = .{ .base = 2 },
-            },
-        },
-
-        .{
-            .text = "string",
-            .kind = .string,
-            .start = .{ .any_of = &.{"\""} },
-            .body = .{
-                .delimited = .{
-                    .end = .same_as_start,
-                    .escape = .backslash,
-                },
-            },
-        },
-
-        .{
-            .text = "char",
-            .kind = .char,
-            .start = .{ .any_of = &.{"'"} },
-            .body = .{
-                .delimited = .{
-                    .end = .same_as_start,
-                    .escape = .backslash,
-                },
-            },
-        },
+        //.{
+        //    .text = "hex integer",
+        //    .kind = .int,
+        //    .start = .{ .any_of = &.{ "0x", "0X" } },
+        //    .body = .{
+        //        .number = .{ .base = 16 },
+        //    },
+        //},
+        //
+        //.{
+        //    .text = "binary integer",
+        //    .kind = .int,
+        //    .start = .{ .any_of = &.{ "0b", "0B" } },
+        //    .body = .{
+        //        .number = .{ .base = 2 },
+        //    },
+        //},
+        //
+        //.{
+        //    .text = "string",
+        //    .kind = .string,
+        //    .start = .{ .any_of = &.{"\""} },
+        //    .body = .{
+        //        .delimited = .{
+        //            .end = .same_as_start,
+        //            .escape = .backslash,
+        //        },
+        //    },
+        //},
+        //
+        //.{
+        //    .text = "char",
+        //    .kind = .char,
+        //    .start = .{ .any_of = &.{"'"} },
+        //    .body = .{
+        //        .delimited = .{
+        //            .end = .same_as_start,
+        //            .escape = .backslash,
+        //        },
+        //    },
+        //},
     };
 };

@@ -14,6 +14,10 @@ pub const Span = struct {
     source_id: u32,
     start: usize,
     end: usize,
+    line_start: usize,
+    col_start: usize,
+    line_end: usize,
+    col_end: usize,
 };
 
 pub fn Spanned(comptime T: type) type {
@@ -24,8 +28,25 @@ pub fn Spanned(comptime T: type) type {
         const Self = @This();
 
         pub fn init(start: usize, end: usize, value: T) Self {
+            const col_start = start + 1;
+            const col_end = end + 1;
             return .{
-                .span = .{ .source_id = 0, .start = start, .end = end },
+                .span = .{
+                    .source_id = 0,
+                    .start = start,
+                    .end = end,
+                    .line_start = 1,
+                    .col_start = col_start,
+                    .line_end = 1,
+                    .col_end = col_end,
+                },
+                .value = value,
+            };
+        }
+
+        pub fn initWithSpan(span_value: Span, value: T) Self {
+            return .{
+                .span = span_value,
                 .value = value,
             };
         }
