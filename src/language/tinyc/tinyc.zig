@@ -18,7 +18,8 @@ pub const Token = Lexicon.Token;
 pub const ASTPrintResolver = core.ASTPrintResolver;
 
 pub const ASTNode = @import("ast.zig").ASTNode;
-const ASTTree = core.ASTTree(ASTNode);
+pub const SpannedASTNode = core.Spanned(ASTNode);
+const ASTTree = core.ASTTree(SpannedASTNode);
 pub const Lexer = core.Lexer(Lexicon);
 
 pub const TokenStream = core.TokenStream(Lexer);

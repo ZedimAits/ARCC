@@ -13,33 +13,80 @@
 const std = @import("std");
 
 const front = @import("../../frontend/front.zig");
+const Span = front.Span;
 
 pub const HLNodeID = struct { value: u32 };
 
-pub const UniqueID = u32;
-pub const TypeId = u32;
-pub const RegionId = u32;
+pub const SymbolID = struct { value: u32 };
+pub const TypeId = struct { value: u32 };
+pub const RegionId = struct { value: u32 };
 
-
-pub fn HLTree(comptime HLNode: type) type {
+pub fn HLTree(comptime HLNode: type, comptime HLNodeData: type) type {
     return struct {
         const Self = @This();
+        const HLNodeKind = std.meta.Tag(HLNodeData);
 
         gpa: std.mem.Allocator,
-        nodes: std.ArrayListUnmanaged(HLNode),
+        nodes: std.ArrayListUnmanaged(HLNode) = .{},
+
+        pub fn init(gpa: std.mem.Allocator) Self {
+            return .{ .gpa = gpa };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.nodes.deinit(self.gpa);
+        }
 
         pub fn add(
             self: *Self,
             span: Span,
-            kind: HLNode,
+            kind: HLNodeKind,
+            data: HLNodeData,
         ) !HLNodeID {
-            //TODO
+            const raw_id: u32 = @intCast(self.nodes.items.len);
+            const id = HLNodeID{ .value = raw_id };
+
+            try self.nodes.append(self.gpa, .{
+                .id = id,
+                .kind = kind,
+                .meta = .{
+                    .type_ = .{ .value = 0 }, // unknown
+                    .region = .{ .value = 0 }, // global/static
+                    .flags = .{},
+                    .effects = .{},
+                    .span = span,
+                },
+                .data = data,
+            });
 
             return id;
         }
 
         pub fn get(self: *Self, id: HLNodeID) *HLNode {
-            return &self.nodes.items[id];
+            return &self.nodes.items[id.value];
         }
     };
 }
+
+pub const HLNodeMeta = struct {
+    type_: TypeId, // set after typecheck
+    region: RegionId, // RegionId
+
+    flags: Flags,
+    effects: Effects,
+    span: Span,
+
+    pub const Flags = packed struct(u16) {
+        produces_place: bool = false,
+        is_const: bool = false,
+        is_move: bool = false,
+        _pad: u13 = 0,
+    };
+
+    pub const Effects = packed struct(u8) {
+        reads_mem: bool = false,
+        writes_mem: bool = false,
+        has_io: bool = false,
+        _pad: u5 = 0,
+    };
+};

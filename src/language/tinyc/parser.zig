@@ -18,8 +18,9 @@ const tinyc = @import("tinyc.zig");
 const ParserError = core.ParseError;
 
 const ASTNode = tinyc.ASTNode;
+const SpannedASTNode = tinyc.SpannedASTNode;
 const BinaryOp = @import("ast.zig").BinaryOp;
-const ASTTree = core.ASTTree(ASTNode);
+const ASTTree = core.ASTTree(SpannedASTNode);
 const SpannedToken = tinyc.Lexer.SpannedToken;
 const Token = tinyc.Token;
 const TokenStream = tinyc.TokenStream;
@@ -55,8 +56,8 @@ pub const Parser = struct {
         switch (tok.value) {
             .symbol => |s| switch (s) {
                 .semicolon => {
-                    _ = self.advance();
-                    return tree.add(.{ .empty = {} }) catch return ParserError.SyntaxError;
+                    const semi = self.advance();
+                    return self.addNode(tree, semi.span, .{ .empty = {} });
                 },
                 .l_brace => return self.block(tree),
                 else => {},
@@ -71,12 +72,13 @@ pub const Parser = struct {
         }
 
         const expr_id = try self.expression(tree);
-        try self.expectSymbol(.semicolon);
-        return tree.add(.{ .expr_stmt = .{ .expr = expr_id } }) catch return ParserError.SyntaxError;
+        const semi = try self.expectSymbol(.semicolon);
+        const expr_span = self.spanOfNode(tree, expr_id);
+        return self.addNode(tree, self.mergeSpans(expr_span, semi.span), .{ .expr_stmt = .{ .expr = expr_id } });
     }
 
     fn block(self: *const Parser, tree: *ASTTree) ParserError!core.NodeID {
-        try self.expectSymbol(.l_brace);
+        const l_brace = try self.expectSymbol(.l_brace);
 
         var start: ?core.NodeID = null;
         var count: usize = 0;
@@ -89,61 +91,65 @@ pub const Parser = struct {
             count += 1;
         }
 
-        try self.expectSymbol(.r_brace);
+        const r_brace = try self.expectSymbol(.r_brace);
+        const block_span = self.mergeSpans(l_brace.span, r_brace.span);
 
         if (start == null) {
-            const empty_id = tree.add(.{ .empty = {} }) catch return ParserError.SyntaxError;
-            return tree.add(.{ .block = .{ .start = empty_id, .count = 1 } }) catch return ParserError.SyntaxError;
+            const empty_id = try self.addNode(tree, block_span, .{ .empty = {} });
+            return self.addNode(tree, block_span, .{ .block = .{ .start = empty_id, .count = 1 } });
         }
 
-        return tree.add(.{ .block = .{ .start = start.?, .count = count } }) catch return ParserError.SyntaxError;
+        return self.addNode(tree, block_span, .{ .block = .{ .start = start.?, .count = count } });
     }
 
     fn ifStmt(self: *const Parser, tree: *ASTTree) ParserError!core.NodeID {
-        try self.expectKeyword(.if_);
+        const if_tok = try self.expectKeyword(.if_);
         const cond = try self.parenExpr(tree);
         const then_body = try self.statement(tree);
 
         var else_body: ?core.NodeID = null;
+        var end_span = self.spanOfNode(tree, then_body);
         if (self.matchKeyword(.else_)) {
             else_body = try self.statement(tree);
+            end_span = self.spanOfNode(tree, else_body.?);
         }
 
-        return tree.add(.{ .if_ = .{
+        return self.addNode(tree, self.mergeSpans(if_tok.span, end_span), .{ .if_ = .{
             .cond = cond,
             .then = then_body,
             .else_ = else_body,
-        } }) catch return ParserError.SyntaxError;
+        } });
     }
 
     fn whileStmt(self: *const Parser, tree: *ASTTree) ParserError!core.NodeID {
-        try self.expectKeyword(.while_);
+        const while_tok = try self.expectKeyword(.while_);
         const cond = try self.parenExpr(tree);
         const body = try self.statement(tree);
 
-        return tree.add(.{ .while_ = .{
+        const body_span = self.spanOfNode(tree, body);
+        return self.addNode(tree, self.mergeSpans(while_tok.span, body_span), .{ .while_ = .{
             .cond = cond,
             .body = body,
-        } }) catch return ParserError.SyntaxError;
+        } });
     }
 
     fn doWhileStmt(self: *const Parser, tree: *ASTTree) ParserError!core.NodeID {
-        try self.expectKeyword(.do_);
+        const do_tok = try self.expectKeyword(.do_);
         const body = try self.statement(tree);
-        try self.expectKeyword(.while_);
+        _ = try self.expectKeyword(.while_);
         const cond = try self.parenExpr(tree);
-        try self.expectSymbol(.semicolon);
+        const semi = try self.expectSymbol(.semicolon);
 
-        return tree.add(.{ .do_while = .{
+        return self.addNode(tree, self.mergeSpans(do_tok.span, semi.span), .{ .do_while = .{
             .body = body,
             .cond = cond,
-        } }) catch return ParserError.SyntaxError;
+        } });
     }
 
     fn parenExpr(self: *const Parser, tree: *ASTTree) ParserError!core.NodeID {
-        try self.expectSymbol(.l_paren);
+        _ = try self.expectSymbol(.l_paren);
         const expr = try self.expression(tree);
-        try self.expectSymbol(.r_paren);
+        _ = try self.expectSymbol(.r_paren);
         return expr;
     }
 
@@ -152,13 +158,15 @@ pub const Parser = struct {
         const left = try self.testExpr(tree);
 
         if (self.matchSymbol(.equal)) {
-            switch (tree.get(left).*) {
+            switch (tree.get(left).value) {
                 .ident => {},
                 else => return ParserError.SyntaxError,
             }
 
             const right = try self.expression(tree);
-            return tree.add(.{ .assign = .{ .left = left, .right = right } }) catch return ParserError.SyntaxError;
+            const left_span = self.spanOfNode(tree, left);
+            const right_span = self.spanOfNode(tree, right);
+            return self.addNode(tree, self.mergeSpans(left_span, right_span), .{ .assign = .{ .left = left, .right = right } });
         }
 
         return left;
@@ -170,7 +178,9 @@ pub const Parser = struct {
 
         if (self.matchSymbol(.less_than)) {
             const right = try self.sum(tree);
-            left = tree.add(.{ .binary = .{ .op = .lt, .left = left, .right = right } }) catch return ParserError.SyntaxError;
+            const left_span = self.spanOfNode(tree, left);
+            const right_span = self.spanOfNode(tree, right);
+            left = try self.addNode(tree, self.mergeSpans(left_span, right_span), .{ .binary = .{ .op = .lt, .left = left, .right = right } });
         }
 
         return left;
@@ -193,7 +203,9 @@ pub const Parser = struct {
             _ = self.advance();
             const right = try self.term(tree);
 
-            left = tree.add(.{ .binary = .{ .op = op, .left = left, .right = right } }) catch return ParserError.SyntaxError;
+            const left_span = self.spanOfNode(tree, left);
+            const right_span = self.spanOfNode(tree, right);
+            left = try self.addNode(tree, self.mergeSpans(left_span, right_span), .{ .binary = .{ .op = op, .left = left, .right = right } });
         }
 
         return left;
@@ -206,18 +218,19 @@ pub const Parser = struct {
         return switch (tok.value) {
             .identifier => |id| blk: {
                 _ = self.advance();
-                break :blk tree.add(.{ .ident = .{ .id = id } }) catch return ParserError.SyntaxError;
+                break :blk self.addNode(tree, tok.span, .{ .ident = .{ .id = id } });
             },
             .literal => |id| blk: {
                 _ = self.advance();
-                break :blk tree.add(.{ .literal = .{ .id = id } }) catch return ParserError.SyntaxError;
+                break :blk self.addNode(tree, tok.span, .{ .literal = .{ .id = id } });
             },
             .symbol => |s| switch (s) {
                 .l_paren => self.parenExpr(tree),
                 .minus => blk: {
-                    _ = self.advance();
+                    const minus = self.advance();
                     const expr = try self.term(tree);
-                    break :blk tree.add(.{ .unary = .{ .op = .neg, .expr = expr } }) catch return ParserError.SyntaxError;
+                    const expr_span = self.spanOfNode(tree, expr);
+                    break :blk self.addNode(tree, self.mergeSpans(minus.span, expr_span), .{ .unary = .{ .op = .neg, .expr = expr } });
                 },
                 else => ParserError.SyntaxError,
             },
@@ -251,12 +264,32 @@ pub const Parser = struct {
         return true;
     }
 
-    fn expectSymbol(self: *const Parser, s: Symbol) ParserError!void {
-        if (!self.matchSymbol(s)) return ParserError.SyntaxError;
+    fn expectSymbol(self: *const Parser, s: Symbol) ParserError!SpannedToken {
+        const tok = self.peek();
+        switch (tok.value) {
+            .symbol => |got| {
+                if (got == s) {
+                    _ = self.advance();
+                    return tok;
+                }
+            },
+            else => {},
+        }
+        return ParserError.SyntaxError;
     }
 
-    fn expectKeyword(self: *const Parser, k: Keyword) ParserError!void {
-        if (!self.matchKeyword(k)) return ParserError.SyntaxError;
+    fn expectKeyword(self: *const Parser, k: Keyword) ParserError!SpannedToken {
+        const tok = self.peek();
+        switch (tok.value) {
+            .keyword => |got| {
+                if (got == k) {
+                    _ = self.advance();
+                    return tok;
+                }
+            },
+            else => {},
+        }
+        return ParserError.SyntaxError;
     }
 
     fn peek(self: *const Parser) SpannedToken {
@@ -269,5 +302,28 @@ pub const Parser = struct {
 
     fn isEof(self: *const Parser) bool {
         return self.peek().value == .eof;
+    }
+
+    fn addNode(self: *const Parser, tree: *ASTTree, span: core.Span, value: ASTNode) ParserError!core.NodeID {
+        _ = self;
+        return tree.add(SpannedASTNode.initWithSpan(span, value)) catch return ParserError.SyntaxError;
+    }
+
+    fn spanOfNode(self: *const Parser, tree: *const ASTTree, id: core.NodeID) core.Span {
+        _ = self;
+        return tree.get(id).span;
+    }
+
+    fn mergeSpans(self: *const Parser, start: core.Span, end: core.Span) core.Span {
+        _ = self;
+        return .{
+            .source_id = start.source_id,
+            .start = start.start,
+            .end = end.end,
+            .line_start = start.line_start,
+            .col_start = start.col_start,
+            .line_end = end.line_end,
+            .col_end = end.col_end,
+        };
     }
 };

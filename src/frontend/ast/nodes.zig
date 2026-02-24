@@ -12,89 +12,89 @@
 
 const core = @import("../front.zig");
 
-const NodeID = @import("ast.zig").ASTNodeID;
+const ASTNodeID = @import("ast.zig").ASTNodeID;
 
 pub fn BinaryNode(comptime Op: type) type {
     return struct {
         op: Op,
-        left: NodeID,
-        right: NodeID,
+        left: ASTNodeID,
+        right: ASTNodeID,
     };
 }
 
 pub fn UnaryNode(comptime Op: type) type {
     return struct {
         op: Op,
-        expr: NodeID,
+        expr: ASTNodeID,
     };
 }
 
 pub const If = struct {
-    cond: NodeID,
-    then: NodeID,
-    else_: ?NodeID,
+    cond: ASTNodeID,
+    then: ASTNodeID,
+    else_: ?ASTNodeID,
 };
 
 pub const While = struct {
-    cond: NodeID,
-    body: NodeID,
+    cond: ASTNodeID,
+    body: ASTNodeID,
 };
 
 pub const DoWhile = struct {
-    body: NodeID,
-    cond: NodeID,
+    body: ASTNodeID,
+    cond: ASTNodeID,
 };
 
 pub const For = struct {
-    init: ?NodeID,
-    cond: ?NodeID,
-    step: ?NodeID,
-    body: NodeID,
+    init: ?ASTNodeID,
+    cond: ?ASTNodeID,
+    step: ?ASTNodeID,
+    body: ASTNodeID,
 };
 
 pub const Block = struct {
-    start: NodeID,
+    start: ASTNodeID,
     count: usize,
 };
 
 pub const Call = struct {
-    callee: NodeID,
-    start: NodeID,
+    callee: ASTNodeID,
+    start: ASTNodeID,
     count: usize,
 };
 
 pub const Assign = struct {
-    left: NodeID,
-    right: NodeID,
+    left: ASTNodeID,
+    right: ASTNodeID,
 };
 
 pub const Return = struct {
-    value: ?NodeID,
+    value: ?ASTNodeID,
 };
 
 pub const Member = struct {
-    object: NodeID,
+    object: ASTNodeID,
     field: core.IdentifierID,
 };
 
 pub const Index = struct {
-    object: NodeID,
-    index: NodeID,
+    object: ASTNodeID,
+    index: ASTNodeID,
 };
 
 pub const VarDecl = struct {
     name: core.IdentifierID,
     type_name: core.IdentifierID,
-    value: ?NodeID,
+    value: ?ASTNodeID,
 };
 
 pub const ExprStmt = struct {
-    expr: NodeID,
+    expr: ASTNodeID,
 };
 
 pub const Cast = struct {
     type_name: core.IdentifierID,
-    expr: NodeID,
+    expr: ASTNodeID,
 };
 
 pub const Literal = struct {

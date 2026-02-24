@@ -14,7 +14,7 @@ const std = @import("std");
 const core = @import("../../frontend/front.zig");
 const nodes = core.nodes;
 
-const NodeKind = enum {
+const ASTNodeKind = enum {
     empty,
     unary,
     binary,
@@ -28,7 +28,7 @@ const NodeKind = enum {
     literal,
 };
 
-pub const ASTNode = union(NodeKind) {
+pub const ASTNode = union(ASTNodeKind) {
     empty,
     unary: nodes.UnaryNode(UnaryOp),
     binary: nodes.BinaryNode(BinaryOp),

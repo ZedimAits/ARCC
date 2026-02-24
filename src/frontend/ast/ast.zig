@@ -19,6 +19,7 @@ pub const ASTNodeID = struct { value: u32 };
 pub fn ASTTree(comptime Node: type) type {
     return struct {
         const Self = @This();
+        const InnerNode = if (@hasField(Node, "value")) @TypeOf((@as(Node, undefined)).value) else Node;
 
         gpa: std.mem.Allocator,
         nodes: std.ArrayListUnmanaged(Node) = .{},
@@ -106,10 +107,12 @@ pub fn ASTTree(comptime Node: type) type {
                 return;
             }
 
-            const node = self.get(id).*;
-            if (@hasDecl(Node, "writeToResolved")) {
+            const stored = self.get(id).*;
+            const node: InnerNode = if (@hasField(Node, "value")) stored.value else stored;
+
+            if (@hasDecl(InnerNode, "writeToResolved")) {
                 try node.writeToResolved(self, writer, indent, resolver);
-            } else if (@hasDecl(Node, "writeTo")) {
+            } else if (@hasDecl(InnerNode, "writeTo")) {
                 try node.writeTo(self, writer, indent);
             } else {
                 try writeIndent(writer, indent);
