@@ -38,8 +38,7 @@ pub const MLNodeMeta = struct {
     attrs: AttrSetID = .{ .value = 0 },
     region: MLRegionID = .{ .value = 0 },
     scope: u32 = 0,
-    result_start: u32 = 0,
-    result_count: u16 = 0,
+    result: ?MLValueID,
 };
 
 pub const UnaryOp = nodes.UnaryOp;
@@ -84,6 +83,7 @@ pub const MLNode = struct {
     kind: std.meta.Tag(MLNodeData),
     meta: MLNodeMeta,
     data: MLNodeData,
+    value: MLValueID,
 };
 
 pub const MLGraph = struct {
@@ -91,6 +91,7 @@ pub const MLGraph = struct {
 
     gpa: std.mem.Allocator,
     nodes: std.ArrayListUnmanaged(MLNode) = .{},
+    values: std.ArrayListUnmanaged(MLValueID) = .{},
 
     pub fn init(gpa: std.mem.Allocator) Self {
         return .{ .gpa = gpa };
@@ -117,7 +118,16 @@ pub const MLGraph = struct {
         return id;
     }
 
+    pub fn add_value(self: *Self, value: ???) MLValueID {
+        
+    }
+
     pub fn get(self: *Self, id: MLNodeID) *MLNode {
         return &self.nodes.items[id.value];
+    }
+
+    pub fn resultOf(self: *Self, n: MLNodeID) !MLValueID {
+        const node = self.get(n);
+        return node.meta.result orelse error.NoResult;
     }
 };

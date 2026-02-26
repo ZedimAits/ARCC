@@ -309,7 +309,9 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNode, ml_graph: *MLGra
             var let: nodes.Let = let_switch;
 
             const temp_id = lowerHLNode(hl_tree, hl_tree.get(let.init), ml_graph);
+
             const data: MLNodeData = MLNodeData{ .store = .{ .addr = let.symbol, .value = temp_id } };
+
             ml_graph.add(node.span, data);
         },
         //assign: nodes.Assign,
