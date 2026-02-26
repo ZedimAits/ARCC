@@ -15,9 +15,10 @@ const std = @import("std");
 const front = @import("../../frontend/front.zig");
 const Span = front.Span;
 pub const SymbolID = @import("../symbol.zig").SymbolID;
+const types = @import("../type.zig");
 
 pub const HLNodeID = struct { value: u32 };
-pub const TypeId = struct { value: u32 };
+pub const TypeId = types.TypeID;
 pub const RegionId = struct { value: u32 };
 
 pub fn HLTree(comptime HLNode: type) type {

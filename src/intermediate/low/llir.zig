@@ -11,61 +11,22 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const std = @import("std");
+const types = @import("../type.zig");
 
-pub const LLTypeID = struct { value: u32 };
+pub const LLTypeID = types.TypeID;
 pub const LLValueID = struct { value: u32 };
 pub const LLInstID = struct { value: u32 };
 pub const LLBlockID = struct { value: u32 };
 pub const LLFuncID = struct { value: u32 };
 pub const LLGlobalID = struct { value: u32 };
 
-pub const CallingConv = enum {
-    c,
-    fast,
-    cold,
-};
+pub const CallingConv = types.CallingConv;
 
-pub const IntSign = enum {
-    unsigned,
-    signed,
-};
+pub const IntSign = types.IntSign;
 
-pub const LLTypeKind = enum {
-    void,
-    int,
-    float,
-    ptr,
-    array,
-    vector,
-    function,
-};
+pub const LLTypeKind = types.TypeKind;
 
-pub const LLType = union(LLTypeKind) {
-    void,
-    int: struct {
-        bits: u16,
-        sign: IntSign = .unsigned,
-    },
-    float: struct {
-        bits: u16, // usually 8/16/32/64/128
-    },
-    ptr,
-    array: struct {
-        elem: LLTypeID,
-        len: u32,
-    },
-    vector: struct {
-        elem: LLTypeID,
-        len: u16,
-    },
-    function: struct {
-        ret: LLTypeID,
-        param_start: u32,
-        param_count: u16,
-        variadic: bool = false,
-        cc: CallingConv = .c,
-    },
-};
+pub const LLType = types.Type;
 
 pub const LLConst = union(enum) {
     int: u128,
@@ -235,7 +196,8 @@ pub const LLModule = struct {
 
     pub fn addType(self: *Self, data: LLType) !LLTypeID {
         const id = LLTypeID{ .value = @intCast(self.types.items.len) };
-        try self.types.append(self.gpa, .{ .id = id, .data = data });
+        _ = id;
+        try self.types.append(self.gpa, data);
         return id;
     }
 

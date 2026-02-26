@@ -11,12 +11,13 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const front = @import("../../frontend/front.zig");
+const types = @import("../type.zig");
 
 pub const MLNodeID = struct { value: u32 };
 pub const MLValueID = struct { value: u32 };
 pub const MLBlockID = struct { value: u32 };
 pub const MLRegionID = struct { value: u32 };
-pub const MLTypeID = struct { value: u32 };
+pub const MLTypeID = types.TypeID;
 pub const MLSymbolID = struct { value: u32 };
 
 pub const UnaryOp = enum {
