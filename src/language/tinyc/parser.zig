@@ -50,6 +50,8 @@ pub const Parser = struct {
         return tree;
     }
 
+    
+
     fn statement(self: *const Parser, tree: *ASTTree) ParserError!core.NodeID {
         const tok = self.peek();
 

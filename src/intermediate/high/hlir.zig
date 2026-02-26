@@ -21,10 +21,34 @@ pub const SymbolID = struct { value: u32 };
 pub const TypeId = struct { value: u32 };
 pub const RegionId = struct { value: u32 };
 
-pub fn HLTree(comptime HLNode: type, comptime HLNodeData: type) type {
+pub fn HLTree(comptime HLNode: type) type {
     return struct {
         const Self = @This();
-        const HLNodeKind = std.meta.Tag(HLNodeData);
+
+        pub const HLNodeMeta = struct {
+            type_: TypeId, // set after typecheck
+            region: RegionId, // RegionId
+
+            data: HLNode,
+
+            flags: Flags,
+            effects: Effects,
+            span: Span,
+
+            pub const Flags = packed struct(u16) {
+                produces_place: bool = false,
+                is_const: bool = false,
+                is_move: bool = false,
+                _pad: u13 = 0,
+            };
+
+            pub const Effects = packed struct(u8) {
+                reads_mem: bool = false,
+                writes_mem: bool = false,
+                has_io: bool = false,
+                _pad: u5 = 0,
+            };
+        };
 
         gpa: std.mem.Allocator,
         nodes: std.ArrayListUnmanaged(HLNode) = .{},
@@ -37,26 +61,17 @@ pub fn HLTree(comptime HLNode: type, comptime HLNodeData: type) type {
             self.nodes.deinit(self.gpa);
         }
 
-        pub fn add(
-            self: *Self,
-            span: Span,
-            kind: HLNodeKind,
-            data: HLNodeData,
-        ) !HLNodeID {
+        pub fn add(self: *Self, span: Span, node: HLNode) !HLNodeID {
             const raw_id: u32 = @intCast(self.nodes.items.len);
             const id = HLNodeID{ .value = raw_id };
 
             try self.nodes.append(self.gpa, .{
-                .id = id,
-                .kind = kind,
-                .meta = .{
-                    .type_ = .{ .value = 0 }, // unknown
+                .type_ = .{ .value = 0 }, // unknown
                     .region = .{ .value = 0 }, // global/static
                     .flags = .{},
                     .effects = .{},
                     .span = span,
-                },
-                .data = data,
+                .data = node,
             });
 
             return id;
@@ -67,26 +82,3 @@ pub fn HLTree(comptime HLNode: type, comptime HLNodeData: type) type {
         }
     };
 }
-
-pub const HLNodeMeta = struct {
-    type_: TypeId, // set after typecheck
-    region: RegionId, // RegionId
-
-    flags: Flags,
-    effects: Effects,
-    span: Span,
-
-    pub const Flags = packed struct(u16) {
-        produces_place: bool = false,
-        is_const: bool = false,
-        is_move: bool = false,
-        _pad: u13 = 0,
-    };
-
-    pub const Effects = packed struct(u8) {
-        reads_mem: bool = false,
-        writes_mem: bool = false,
-        has_io: bool = false,
-        _pad: u5 = 0,
-    };
-};

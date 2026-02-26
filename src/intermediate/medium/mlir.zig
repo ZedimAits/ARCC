@@ -47,36 +47,36 @@ pub const BinaryOp = nodes.BinaryOp;
 pub const CmpOp = nodes.CmpOp;
 
 pub const MLNodeData = union(enum) {
-    region: nodes.Region,
-    block: nodes.Block,
-    arg: nodes.Arg,
+    region: nodes.Region, // Container for blocks
+    block: nodes.Block, // Sequence of ML nodes
+    arg: nodes.Arg, // Block or function argument
 
-    const_: nodes.Const,
-    load: nodes.Load,
-    store: nodes.Store,
-    addr_of: nodes.AddrOf,
-    index_addr: nodes.IndexAddr,
-    cast: nodes.Cast,
-    unary: nodes.Unary,
-    binary: nodes.Binary,
-    cmp: nodes.Cmp,
-    select: nodes.Select,
-    call: nodes.Call,
-    ret: nodes.Ret,
-    br: nodes.Br,
-    cond_br: nodes.CondBr,
-    switch_: nodes.Switch,
-    phi: nodes.Phi,
-    alloc_stack: nodes.AllocStack,
-    alloc_heap: nodes.AllocHeap,
-    free: nodes.Free,
-    loop_: nodes.Loop,
-    aggregate_make: nodes.AggregateMake,
-    extract: nodes.Extract,
-    insert: nodes.Insert,
-    global: nodes.Global,
-    func: nodes.Func,
-    extern_func: nodes.ExternFunc,
+    const_: nodes.Const, // Constant value
+    load: nodes.Load, // Read value from memory
+    store: nodes.Store, // Write value to memory
+    addr_of: nodes.AddrOf, // Address of a symbol/object
+    index_addr: nodes.IndexAddr, // Address with index offset
+    cast: nodes.Cast, // Type conversion
+    unary: nodes.Unary, // Unary operation
+    binary: nodes.Binary, // Binary operation
+    cmp: nodes.Cmp, // Comparison operation
+    select: nodes.Select, // Conditional select (ternary op)
+    call: nodes.Call, // Function call
+    ret: nodes.Ret, // Function return
+    br: nodes.Br, // Unconditional branch
+    cond_br: nodes.CondBr, // Conditional branch
+    switch_: nodes.Switch, // Multi-way branch
+    phi: nodes.Phi, // SSA phi merge
+    alloc_stack: nodes.AllocStack, // Stack allocation
+    alloc_heap: nodes.AllocHeap, // Heap allocation
+    free: nodes.Free, // Free heap memory
+    loop_: nodes.Loop, // Loop node
+    aggregate_make: nodes.AggregateMake, // Build aggregate value
+    extract: nodes.Extract, // Read field/element from aggregate
+    insert: nodes.Insert, // Write field/element into aggregate
+    global: nodes.Global, // Global definition
+    func: nodes.Func, // Function definition
+    extern_func: nodes.ExternFunc, // External function declaration
 };
 
 pub const MLNode = struct {

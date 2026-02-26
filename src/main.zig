@@ -38,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
         \\a = 0;
         \\if (1 < 2) { ; }
         \\while (a < 3) { a = a + 1; b = 1000; }
-        \\//a = "sds";
+        \\a = "sds";
         \\//1
     ;
     const source_id: u32 = 0;
@@ -47,14 +47,14 @@ pub fn main(init: std.process.Init) !void {
     var tokenStream = tinyc.TokenStream.init(arena, &lexer);
 
     const parser = tinyc.Parser.init(arena, &tokenStream);
-    var tree = parser.parse() catch |err| {
+    var astTree: tinyc.ASTTree = parser.parse() catch |err| {
         if (lexer.last_error != null) {
             lexer.printLastError();
             return;
         }
         return err;
     };
-    defer tree.deinit();
+    defer astTree.deinit();
 
     if (lexer.last_error != null) {
         lexer.printLastError();
@@ -65,7 +65,19 @@ pub fn main(init: std.process.Init) !void {
         .ident_interner = &identInterner,
         .literal_interner = &literalInterner,
     };
-    try tree.writeToWith(stdout_writer, resolver);
+    try astTree.writeToWith(stdout_writer, resolver);
+
+    var hlirTree = try tinyc.lowerASTtoHL(&astTree);
+    defer hlirTree.deinit();
+    //hlirTree.typeCheck();
+
+    //var mlirGraph = hlirTree.lower();
+    //mlirGraph = mlirGraph.optimise();
+
+    //var llirList = mlirGraph.lower();
+    //llirList.colorRegisters();
+
+    //const assembly = llirList.lower();
 
     //// Accessing command line arguments:
     //const args = try init.minimal.args.toSlice(arena);

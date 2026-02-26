@@ -48,9 +48,6 @@ pub const HLNodeData = union(HLNodeKind) {
 
 pub const HLNode = struct {
     id: HLNodeID,
-    kind: HLNodeKind,
     meta: HLNodeMeta,
     data: HLNodeData,
 };
-
-pub const HLTree = hlir.HLTree(HLNode, HLNodeData);
