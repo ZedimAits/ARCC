@@ -30,3 +30,4 @@ pub const ASTPrintResolver = front.ASTPrintResolver;
 
 const hlir = @import("hlir.zig");
 pub const lowerASTtoHL = hlir.lowerASTtoHL;
+pub const HLPrintResolver = hlir.HLPrintResolver;

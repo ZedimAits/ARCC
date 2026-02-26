@@ -86,7 +86,7 @@ pub fn ASTTree(comptime Node: type) type {
         }
 
         pub fn writeToWith(self: *const Self, writer: *std.Io.Writer, resolver: anytype) anyerror!void {
-            try writer.print("ASTTree(roots={d}, nodes={d})\n", .{
+            try writer.print("AST-TREE (roots={d}, nodes={d}):\n", .{
                 self.rootCount(),
                 self.count(),
             });

@@ -34,17 +34,28 @@ pub fn main(init: std.process.Init) !void {
     var literalInterner = core.LiteralInterner.init(arena);
     defer literalInterner.deinit();
 
+    //########## input handling
+
     const input =
         \\a = 0;
         \\if (1 < 2) { ; }
         \\while (a < 3) { a = a + 1; b = 1000; }
-        \\a = "sds";
+        \\//a = "sds";
         \\//1
     ;
     const source_id: u32 = 0;
 
+    std.debug.print("INPUT:\n{s}\n\n", .{input});
+
+    //########## lexer
+
     var lexer = tinyc.Lexer.initWithSourceId(arena, input, source_id, &identInterner, &literalInterner);
     var tokenStream = tinyc.TokenStream.init(arena, &lexer);
+    try dumpTokenStream(&tokenStream, &identInterner, &literalInterner, stdout_writer);
+
+    _ = try stdout_writer.write("\n\n");
+
+    //########## parser
 
     const parser = tinyc.Parser.init(arena, &tokenStream);
     var astTree: tinyc.ASTTree = parser.parse() catch |err| {
@@ -67,11 +78,23 @@ pub fn main(init: std.process.Init) !void {
     };
     try astTree.writeToWith(stdout_writer, resolver);
 
+    _ = try stdout_writer.write("\n\n");
+
+    //########## hlir
+
     var hlirTree = try tinyc.lowerASTtoHL(&astTree);
     defer hlirTree.deinit();
+
+    const hl_resolver = tinyc.HLPrintResolver{
+        .ident_interner = &identInterner,
+        .literal_interner = &literalInterner,
+    };
+    try hlirTree.writeToWith(stdout_writer, hl_resolver);
     //hlirTree.typeCheck();
 
-    //var mlirGraph = hlirTree.lower();
+    //########## mlir
+
+    var mlirGraph = try tinyc.lowerHLtoML(&hlirTree);
     //mlirGraph = mlirGraph.optimise();
 
     //var llirList = mlirGraph.lower();
@@ -86,4 +109,68 @@ pub fn main(init: std.process.Init) !void {
     //}
 
     try stdout_writer.flush();
+}
+
+fn dumpTokenStream(
+    token_stream: anytype,
+    ident_interner: *const core.IdentInterner,
+    literal_interner: *const core.LiteralInterner,
+    writer: *std.Io.Writer,
+) !void {
+    const cp = token_stream.checkpoint();
+    defer token_stream.restore(cp);
+
+    try writer.print("TOKEN-STREAM:\n", .{});
+
+    var i: usize = 0;
+    var current_line: ?usize = null;
+    while (true) : (i += 1) {
+        const tok = token_stream.advance();
+        const token_line = tok.span.line_start;
+        if (current_line) |line| {
+            if (token_line != line) {
+                try writer.print("\n", .{});
+            } else {
+                try writer.print(" ", .{});
+            }
+        }
+        current_line = token_line;
+
+        try writer.print("{s}", .{tok.value.text()});
+
+        switch (tok.value) {
+            .identifier => |id| {
+                if (ident_interner.get(id)) |name| {
+                    try writer.print("(\"{s}\")", .{name});
+                } else {
+                    try writer.print("(id={d})", .{id.value});
+                }
+            },
+            .literal => |id| {
+                if (literal_interner.get(id)) |lit| {
+                    try writer.print("(", .{});
+                    try writeLiteralValue(writer, lit);
+                    try writer.print(")", .{});
+                } else {
+                    try writer.print("(id={d})", .{id.value});
+                }
+            },
+            else => {},
+        }
+
+        if (tok.value == .eof) break;
+    }
+
+    try writer.print("\n", .{});
+}
+
+fn writeLiteralValue(writer: *std.Io.Writer, lit: core.Literal) !void {
+    switch (lit) {
+        .int => |v| try writer.print("int({d})", .{v.value}),
+        .float => |v| try writer.print("float({d})", .{v.value}),
+        .bool => |v| try writer.print("bool({any})", .{v}),
+        .string => |v| try writer.print("string(\"{s}\")", .{v}),
+        .char => |v| try writer.print("char({d})", .{v}),
+        .null => try writer.print("null", .{}),
+    }
 }

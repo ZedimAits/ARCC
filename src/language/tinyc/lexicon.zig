@@ -23,6 +23,16 @@ pub const Lexicon = struct {
         literal: core.LiteralID,
         identifier: core.IdentifierID,
         eof,
+
+        pub fn text(self: Token) []const u8 {
+            return switch (self) {
+                .symbol => |s| s.text(),
+                .keyword => |k| k.text(),
+                .literal => "literal",
+                .identifier => "identifier",
+                .eof => "eof",
+            };
+        }
     };
 
     // ############################## KEYWORD ##############################

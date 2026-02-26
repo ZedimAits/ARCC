@@ -10,6 +10,7 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
+const std = @import("std");
 const front = @import("../../frontend/front.zig");
 
 const hlir = @import("../../intermediate/high/hlir.zig");
@@ -20,6 +21,9 @@ const nodes = @import("../../intermediate/high/nodes.zig");
 const ast = @import("ast.zig");
 const ASTTree = ast.ASTTree;
 const SpannedASTNode = ast.SpannedASTNode;
+
+const MLGraph = @import("../../intermediate/medium/mlir.zig").MLGraph;
+const MLNode = @import("../../intermediate/medium/mlir.zig").MLNode;
 
 const HLNodeKind = enum {
     empty,
@@ -49,9 +53,156 @@ pub const HLNode = union(HLNodeKind) {
     expr_stmt: nodes.ExprStmt,
     ident: nodes.Identifier,
     literal: nodes.Literal,
+
+    pub fn writeTo(self: @This(), tree: anytype, writer: *std.Io.Writer, indent: usize) anyerror!void {
+        return self.writeToResolved(tree, writer, indent, .{});
+    }
+
+    pub fn writeToResolved(self: @This(), tree: anytype, writer: *std.Io.Writer, indent: usize, resolver: anytype) anyerror!void {
+        switch (self) {
+            .empty => {
+                try writeIndent(writer, indent);
+                try writer.print("empty\n", .{});
+            },
+            .let => |n| {
+                try writeIndent(writer, indent);
+                if (lookupSymbol(resolver, n.symbol)) |name| {
+                    try writer.print("let(symbol={d}, name=\"{s}\")\n", .{ n.symbol.value, name });
+                } else {
+                    try writer.print("let(symbol={d})\n", .{n.symbol.value});
+                }
+                try tree.writeNodeRecursiveWith(writer, n.init, indent + 1, resolver);
+            },
+            .assign => |n| {
+                try writeIndent(writer, indent);
+                try writer.print("assign\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.target, indent + 1, resolver);
+                try tree.writeNodeRecursiveWith(writer, n.value, indent + 1, resolver);
+            },
+            .unary => |n| {
+                try writeIndent(writer, indent);
+                try writer.print("unary\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.expr, indent + 1, resolver);
+            },
+            .binary => |n| {
+                try writeIndent(writer, indent);
+                try writer.print("binary\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.left, indent + 1, resolver);
+                try tree.writeNodeRecursiveWith(writer, n.right, indent + 1, resolver);
+            },
+            .block => |n| {
+                try writeIndent(writer, indent);
+                try writer.print("block(count={d})\n", .{n.count});
+                for (0..n.count) |i| {
+                    const child_id = HLNodeID{
+                        .value = n.start.value + @as(u32, @intCast(i)),
+                    };
+                    try tree.writeNodeRecursiveWith(writer, child_id, indent + 1, resolver);
+                }
+            },
+            .if_ => |n| {
+                try writeIndent(writer, indent);
+                try writer.print("if\n", .{});
+                try writeIndent(writer, indent + 1);
+                try writer.print("cond:\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.cond, indent + 2, resolver);
+                try writeIndent(writer, indent + 1);
+                try writer.print("then:\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.then, indent + 2, resolver);
+                if (n.else_) |e| {
+                    try writeIndent(writer, indent + 1);
+                    try writer.print("else:\n", .{});
+                    try tree.writeNodeRecursiveWith(writer, e, indent + 2, resolver);
+                }
+            },
+            .while_ => |n| {
+                try writeIndent(writer, indent);
+                try writer.print("while\n", .{});
+                try writeIndent(writer, indent + 1);
+                try writer.print("cond:\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.cond, indent + 2, resolver);
+                try writeIndent(writer, indent + 1);
+                try writer.print("body:\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.body, indent + 2, resolver);
+            },
+            .do_while => |n| {
+                try writeIndent(writer, indent);
+                try writer.print("do_while\n", .{});
+                try writeIndent(writer, indent + 1);
+                try writer.print("body:\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.body, indent + 2, resolver);
+                try writeIndent(writer, indent + 1);
+                try writer.print("cond:\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.cond, indent + 2, resolver);
+            },
+            .expr_stmt => |n| {
+                try writeIndent(writer, indent);
+                try writer.print("expr_stmt\n", .{});
+                try tree.writeNodeRecursiveWith(writer, n.expr, indent + 1, resolver);
+            },
+            .ident => |n| {
+                try writeIndent(writer, indent);
+                if (lookupSymbol(resolver, n.symbol)) |name| {
+                    try writer.print("ident(symbol={d}, name=\"{s}\")\n", .{ n.symbol.value, name });
+                } else {
+                    try writer.print("ident(symbol={d})\n", .{n.symbol.value});
+                }
+            },
+            .literal => |n| {
+                try writeIndent(writer, indent);
+                if (lookupLiteral(resolver, n.literal)) |lit| {
+                    try writer.print("literal(id={d}, value=", .{n.literal.value});
+                    try writeLiteralValue(writer, lit);
+                    try writer.print(")\n", .{});
+                } else {
+                    try writer.print("literal(id={d})\n", .{n.literal.value});
+                }
+            },
+        }
+    }
+
+    fn writeIndent(writer: *std.Io.Writer, indent: usize) anyerror!void {
+        for (0..indent) |_| {
+            try writer.print("  ", .{});
+        }
+    }
+
+    fn lookupSymbol(resolver: anytype, id: hlir.SymbolID) ?[]const u8 {
+        if (!@hasDecl(@TypeOf(resolver), "lookupSymbol")) return null;
+        return resolver.lookupSymbol(id);
+    }
+
+    fn lookupLiteral(resolver: anytype, id: front.LiteralID) ?front.Literal {
+        if (!@hasDecl(@TypeOf(resolver), "lookupLiteral")) return null;
+        return resolver.lookupLiteral(id);
+    }
+
+    fn writeLiteralValue(writer: *std.Io.Writer, lit: front.Literal) anyerror!void {
+        switch (lit) {
+            .int => |v| try writer.print("int({d})", .{v.value}),
+            .float => |v| try writer.print("float({d})", .{v.value}),
+            .bool => |v| try writer.print("bool({any})", .{v}),
+            .string => |v| try writer.print("string(\"{s}\")", .{v}),
+            .char => |v| try writer.print("char({d})", .{v}),
+            .null => try writer.print("null", .{}),
+        }
+    }
 };
 
 pub const HLTree = hlir.HLTree(HLNode);
+
+pub const HLPrintResolver = struct {
+    ident_interner: *const front.IdentInterner,
+    literal_interner: *const front.LiteralInterner,
+
+    pub fn lookupSymbol(self: @This(), id: hlir.SymbolID) ?[]const u8 {
+        return self.ident_interner.get(.{ .value = id.value });
+    }
+
+    pub fn lookupLiteral(self: @This(), id: front.LiteralID) ?front.Literal {
+        return self.literal_interner.get(id);
+    }
+};
 
 pub fn lowerASTtoHL(ast_tree: *const ASTTree) !HLTree {
     var tree = HLTree.init(ast_tree.gpa);
@@ -59,22 +210,23 @@ pub fn lowerASTtoHL(ast_tree: *const ASTTree) !HLTree {
 
     for (0..ast_tree.rootCount()) |i| {
         const root_id = ast_tree.getRoot(i);
-        _ = try lowerNode(ast_tree, ast_tree.get(root_id), &tree);
+        const hl_root = try lowerASTNode(ast_tree, ast_tree.get(root_id), &tree);
+        try tree.addRoot(hl_root);
     }
 
     return tree;
 }
 
-pub fn lowerNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *HLTree) !HLNodeID {
+pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *HLTree) !HLNodeID {
     return switch (node.value) {
         .empty => try tree.add(node.span, .{ .empty = {} }),
         .unary => |unary| blk: {
-            const expr = try lowerNode(ast_tree, ast_tree.get(unary.expr), tree);
+            const expr = try lowerASTNode(ast_tree, ast_tree.get(unary.expr), tree);
             break :blk try tree.add(node.span, .{ .unary = .{ .expr = expr } });
         },
         .binary => |binary| blk: {
-            const left = try lowerNode(ast_tree, ast_tree.get(binary.left), tree);
-            const right = try lowerNode(ast_tree, ast_tree.get(binary.right), tree);
+            const left = try lowerASTNode(ast_tree, ast_tree.get(binary.left), tree);
+            const right = try lowerASTNode(ast_tree, ast_tree.get(binary.right), tree);
             break :blk try tree.add(node.span, .{ .binary = .{ .left = left, .right = right } });
         },
         .block => |block| blk: {
@@ -87,7 +239,7 @@ pub fn lowerNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *H
                 const child_ast_id = front.NodeID{
                     .value = block.start.value + @as(u32, @intCast(i)),
                 };
-                const child = try lowerNode(ast_tree, ast_tree.get(child_ast_id), tree);
+                const child = try lowerASTNode(ast_tree, ast_tree.get(child_ast_id), tree);
                 if (first == null) first = child;
             }
 
@@ -97,10 +249,10 @@ pub fn lowerNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *H
             } });
         },
         .if_ => |if_node| blk: {
-            const cond = try lowerNode(ast_tree, ast_tree.get(if_node.cond), tree);
-            const then = try lowerNode(ast_tree, ast_tree.get(if_node.then), tree);
+            const cond = try lowerASTNode(ast_tree, ast_tree.get(if_node.cond), tree);
+            const then = try lowerASTNode(ast_tree, ast_tree.get(if_node.then), tree);
             const else_ = if (if_node.else_) |else_id|
-                try lowerNode(ast_tree, ast_tree.get(else_id), tree)
+                try lowerASTNode(ast_tree, ast_tree.get(else_id), tree)
             else
                 null;
             break :blk try tree.add(node.span, .{ .if_ = .{
@@ -110,22 +262,22 @@ pub fn lowerNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *H
             } });
         },
         .while_ => |while_node| blk: {
-            const cond = try lowerNode(ast_tree, ast_tree.get(while_node.cond), tree);
-            const body = try lowerNode(ast_tree, ast_tree.get(while_node.body), tree);
+            const cond = try lowerASTNode(ast_tree, ast_tree.get(while_node.cond), tree);
+            const body = try lowerASTNode(ast_tree, ast_tree.get(while_node.body), tree);
             break :blk try tree.add(node.span, .{ .while_ = .{ .cond = cond, .body = body } });
         },
         .do_while => |do_while_node| blk: {
-            const body = try lowerNode(ast_tree, ast_tree.get(do_while_node.body), tree);
-            const cond = try lowerNode(ast_tree, ast_tree.get(do_while_node.cond), tree);
+            const body = try lowerASTNode(ast_tree, ast_tree.get(do_while_node.body), tree);
+            const cond = try lowerASTNode(ast_tree, ast_tree.get(do_while_node.cond), tree);
             break :blk try tree.add(node.span, .{ .do_while = .{ .body = body, .cond = cond } });
         },
         .expr_stmt => |expr_stmt| blk: {
-            const expr = try lowerNode(ast_tree, ast_tree.get(expr_stmt.expr), tree);
+            const expr = try lowerASTNode(ast_tree, ast_tree.get(expr_stmt.expr), tree);
             break :blk try tree.add(node.span, .{ .expr_stmt = .{ .expr = expr } });
         },
         .assign => |assign| blk: {
-            const target = try lowerNode(ast_tree, ast_tree.get(assign.left), tree);
-            const value = try lowerNode(ast_tree, ast_tree.get(assign.right), tree);
+            const target = try lowerASTNode(ast_tree, ast_tree.get(assign.left), tree);
+            const value = try lowerASTNode(ast_tree, ast_tree.get(assign.right), tree);
             break :blk try tree.add(node.span, .{ .assign = .{ .target = target, .value = value } });
         },
         .ident => |ident| try tree.add(node.span, .{ .ident = .{
@@ -135,4 +287,17 @@ pub fn lowerNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *H
             .literal = literal.id,
         } }),
     };
+}
+
+pub fn lowerHLtoML(hl_tree: *const HLTree) !MLGraph {
+    var graph = MLGraph.init(hl_tree.gpa);
+
+    const items: []HLNodeID = hl_tree.nodes.items;
+    for (items) |id| {
+        
+    }
+}
+
+pub fn lowerHLNode(ht_tree: *const HLTree, node: *const SpannedASTNode, tree: *HLTree) !HLNodeID {
+    
 }
