@@ -14,10 +14,9 @@ const std = @import("std");
 
 const front = @import("../../frontend/front.zig");
 const Span = front.Span;
+pub const SymbolID = @import("../symbol.zig").SymbolID;
 
 pub const HLNodeID = struct { value: u32 };
-
-pub const SymbolID = struct { value: u32 };
 pub const TypeId = struct { value: u32 };
 pub const RegionId = struct { value: u32 };
 

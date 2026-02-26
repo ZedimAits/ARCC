@@ -1,0 +1,1 @@
+pub const SymbolID = struct { value: u32 };
