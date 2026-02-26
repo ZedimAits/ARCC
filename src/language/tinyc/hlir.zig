@@ -24,6 +24,8 @@ const SpannedASTNode = ast.SpannedASTNode;
 
 const MLGraph = @import("../../intermediate/medium/mlir.zig").MLGraph;
 const MLNode = @import("../../intermediate/medium/mlir.zig").MLNode;
+const MLNodeID = @import("../../intermediate/medium/mlir.zig").MLNodeID;
+const MLNodeData = @import("../../intermediate/medium/mlir.zig").MLNodeData;
 
 const HLNodeKind = enum {
     empty,
@@ -190,6 +192,7 @@ pub const HLNode = union(HLNodeKind) {
 };
 
 pub const HLTree = hlir.HLTree(HLNode);
+const HLNodeMeta = HLTree.HLNodeMeta;
 
 pub const HLPrintResolver = struct {
     ident_interner: *const front.IdentInterner,
@@ -290,14 +293,36 @@ pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree:
 }
 
 pub fn lowerHLtoML(hl_tree: *const HLTree) !MLGraph {
-    var graph = MLGraph.init(hl_tree.gpa);
+    const graph = MLGraph.init(hl_tree.gpa);
 
-    const items: []HLNodeID = hl_tree.nodes.items;
-    for (items) |id| {
-        
+    const items = hl_tree.roots.items;
+    for (items) |root_id| {
+        const node = hl_tree.get(root_id);
+        const hl_root = try lowerHLNode(hl_tree, node.data, &graph);
+        _ = hl_root;
     }
 }
 
-pub fn lowerHLNode(ht_tree: *const HLTree, node: *const SpannedASTNode, tree: *HLTree) !HLNodeID {
-    
+pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNode, ml_graph: *MLGraph) !MLNodeID {
+    switch (node.data) {
+        .let => |let_switch| {
+            var let: nodes.Let = let_switch;
+
+            const temp_id = lowerHLNode(hl_tree, hl_tree.get(let.init), ml_graph);
+            const data: MLNodeData = MLNodeData{ .store = .{ .addr = let.symbol, .value = temp_id } };
+            ml_graph.add(node.span, data);
+        },
+        //assign: nodes.Assign,
+        //unary: nodes.Unary,
+        //binary: nodes.Binary,
+        //block: nodes.Block,
+        //if_: nodes.If,
+        //while_: nodes.While,
+        //do_while: nodes.DoWhile,
+        //expr_stmt: nodes.ExprStmt,
+        //ident: nodes.Identifier,
+        //literal: nodes.Literal,
+        //empty,
+        else => {},
+    }
 }
