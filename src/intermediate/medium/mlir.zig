@@ -66,7 +66,7 @@ pub const MLNodeData = union(enum) {
     br: nodes.Br, // Unconditional branch
     cond_br: nodes.CondBr, // Conditional branch
     switch_: nodes.Switch, // Multi-way branch
-    phi: nodes.Phi, // SSA phi merge
+    phi: nodes.Phi, // SSA phi merge0
     alloc_stack: nodes.AllocStack, // Stack allocation
     alloc_heap: nodes.AllocHeap, // Heap allocation
     free: nodes.Free, // Free heap memory
@@ -86,7 +86,7 @@ pub const MLNode = struct {
     data: MLNodeData,
 };
 
-pub const MLTree = struct {
+pub const MLGraph = struct {
     const Self = @This();
 
     gpa: std.mem.Allocator,

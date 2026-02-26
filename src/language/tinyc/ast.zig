@@ -190,3 +190,6 @@ pub const UnaryOp = enum {
     //addr,     // &x
     //deref,    // *x
 };
+
+pub const SpannedASTNode = core.Spanned(ASTNode);
+pub const ASTTree: type = core.ASTTree(SpannedASTNode);
