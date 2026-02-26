@@ -15,9 +15,12 @@ const types = @import("../type.zig");
 
 pub const MLNodeID = struct { value: u32 };
 pub const MLValueID = struct { value: u32 };
+pub const MLValue = struct { data: union(enum) {
+    runtime: MLNodeID,
+    comptime_: front.LiteralID,
+}, type: types.TypeID };
 pub const MLBlockID = struct { value: u32 };
 pub const MLRegionID = struct { value: u32 };
-pub const MLTypeID = types.TypeID;
 pub const MLSymbolID = struct { value: u32 };
 
 pub const UnaryOp = enum {

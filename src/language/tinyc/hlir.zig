@@ -308,9 +308,9 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNode, ml_graph: *MLGra
         .let => |let_switch| {
             var let: nodes.Let = let_switch;
 
-            const temp_id = lowerHLNode(hl_tree, hl_tree.get(let.init), ml_graph);
+            const temp_id = try lowerHLNode(hl_tree, hl_tree.get(let.init), ml_graph);
 
-            const data: MLNodeData = MLNodeData{ .store = .{ .addr = let.symbol, .value = temp_id } };
+            const data: MLNodeData = MLNodeData{ .store = .{ .addr = let.symbol, .value = ml_graph.resultOf(temp_id) catch @panic("init muss value haben") } };
 
             ml_graph.add(node.span, data);
         },

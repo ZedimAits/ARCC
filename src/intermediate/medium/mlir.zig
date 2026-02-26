@@ -18,9 +18,9 @@ const nodes = @import("nodes.zig");
 
 pub const MLNodeID = nodes.MLNodeID;
 pub const MLValueID = nodes.MLValueID;
+pub const MLValue = nodes.MLValue;
 pub const MLBlockID = nodes.MLBlockID;
 pub const MLRegionID = nodes.MLRegionID;
-pub const MLTypeID = nodes.MLTypeID;
 pub const MLSymbolID = nodes.MLSymbolID;
 pub const AttrSetID = struct { value: u32 };
 
@@ -91,13 +91,14 @@ pub const MLGraph = struct {
 
     gpa: std.mem.Allocator,
     nodes: std.ArrayListUnmanaged(MLNode) = .{},
-    values: std.ArrayListUnmanaged(MLValueID) = .{},
+    values: std.ArrayListUnmanaged(MLValue) = .{},
 
     pub fn init(gpa: std.mem.Allocator) Self {
         return .{ .gpa = gpa };
     }
 
     pub fn deinit(self: *Self) void {
+        self.nodes.deinit(self.gpa);
         self.nodes.deinit(self.gpa);
     }
 
@@ -118,8 +119,13 @@ pub const MLGraph = struct {
         return id;
     }
 
-    pub fn add_value(self: *Self, value: ???) MLValueID {
-        
+    pub fn add_value(self: *Self, value: MLValue) !MLValueID {
+        const raw_id: u32 = @intCast(self.values.items.len);
+        const id = MLValueID{ .value = raw_id };
+
+        try self.nodes.append(self.gpa, value);
+
+        return id;
     }
 
     pub fn get(self: *Self, id: MLNodeID) *MLNode {
