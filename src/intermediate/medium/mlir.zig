@@ -84,6 +84,7 @@ pub const MLNode = struct {
     meta: MLNodeMeta,
     data: MLNodeData,
     value: MLValueID,
+    next: MLNodeID,
 };
 
 pub const MLGraph = struct {

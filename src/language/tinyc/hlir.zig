@@ -305,7 +305,7 @@ pub fn lowerHLtoML(hl_tree: *const HLTree) !MLGraph {
 
 pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNode, ml_graph: *MLGraph) !MLNodeID {
     switch (node.data) {
-        .let => |let_switch| {
+        .let => |let_switch| { // int a = 5;
             var let: nodes.Let = let_switch;
 
             const temp_id = try lowerHLNode(hl_tree, hl_tree.get(let.init), ml_graph);
@@ -314,11 +314,45 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNode, ml_graph: *MLGra
 
             ml_graph.add(node.span, data);
         },
-        //assign: nodes.Assign,
+        .assign => |node_assign_switch| { // a = 5;
+            const node_assign: nodes.Assign = node_assign_switch;
+            const target: HLNodeID = node_assign.target;
+            const value: HLNodeID = node_assign.value;
+
+            const target_id = try lowerHLNode(hl_tree, hl_tree.get(target), ml_graph);
+            const value_id = try lowerHLNode(hl_tree, hl_tree.get(value), ml_graph);
+
+            const data: MLNodeData = .{ .store = .{ .addr = try ml_graph.resultOf(target_id), .value = try ml_graph.resultOf(value_id) } };
+            
+            ml_graph.add(node.span, data);
+        },
         //unary: nodes.Unary,
         //binary: nodes.Binary,
         //block: nodes.Block,
-        //if_: nodes.If,
+        .if_ => |if_while| { //if without assign
+            const if_: nodes.If = if_while;
+            const cond_hl = if_.cond;
+            const then_hl = if_.then;
+            const else_hl = if_.else_;
+
+            //compare => var x
+            const cond = try lowerHLNode(hl_tree, hl_tree.get(cond_hl).data, ml_graph);
+            cond.
+
+            //cond branch on x => branch then or else/continue
+
+            //=> then_branch
+
+            //=> ?else_branch
+
+            //phi (then, ?else/continue)
+
+
+
+
+
+
+        },
         //while_: nodes.While,
         //do_while: nodes.DoWhile,
         //expr_stmt: nodes.ExprStmt,
@@ -328,3 +362,5 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNode, ml_graph: *MLGra
         else => {},
     }
 }
+
+fn ml_cmp()
