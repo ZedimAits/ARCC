@@ -17,27 +17,24 @@ const llir = @import("llir.zig");
 
 pub const LowerError = error{
     MissingResultSlot,
+    UnsupportedValueKind,
 };
 
 const LowerCtx = struct {
+    ml_graph: *const mlir.MLGraph,
     mod: llir.LLModule,
-
-    // ML id -> LL id maps
     value_slots: std.AutoHashMap(u32, llir.LLValueID),
     type_map: std.AutoHashMap(u32, llir.LLTypeID),
     block_map: std.AutoHashMap(u32, llir.LLBlockID),
     global_map: std.AutoHashMap(u32, llir.LLGlobalID),
-
-    // Common builtin LL types
     ty_void: llir.LLTypeID,
     ty_i1: llir.LLTypeID,
     ty_i64: llir.LLTypeID,
     ty_ptr: llir.LLTypeID,
-
     entry_block: llir.LLBlockID,
 
-    fn init(gpa: std.mem.Allocator) !LowerCtx {
-        var m = llir.LLModule.init(gpa);
+    fn init(ml_graph: *const mlir.MLGraph) !LowerCtx {
+        var m = llir.LLModule.init(ml_graph.gpa);
 
         const ty_void = try m.addType(.{ .void = {} });
         const ty_i1 = try m.addType(.{ .int = .{ .bits = 1, .sign = .unsigned } });
@@ -61,11 +58,12 @@ const LowerCtx = struct {
         });
 
         return .{
+            .ml_graph = ml_graph,
             .mod = m,
-            .value_slots = std.AutoHashMap(u32, llir.LLValueID).init(gpa),
-            .type_map = std.AutoHashMap(u32, llir.LLTypeID).init(gpa),
-            .block_map = std.AutoHashMap(u32, llir.LLBlockID).init(gpa),
-            .global_map = std.AutoHashMap(u32, llir.LLGlobalID).init(gpa),
+            .value_slots = std.AutoHashMap(u32, llir.LLValueID).init(ml_graph.gpa),
+            .type_map = std.AutoHashMap(u32, llir.LLTypeID).init(ml_graph.gpa),
+            .block_map = std.AutoHashMap(u32, llir.LLBlockID).init(ml_graph.gpa),
+            .global_map = std.AutoHashMap(u32, llir.LLGlobalID).init(ml_graph.gpa),
             .ty_void = ty_void,
             .ty_i1 = ty_i1,
             .ty_i64 = ty_i64,
@@ -81,37 +79,66 @@ const LowerCtx = struct {
         self.global_map.deinit();
     }
 
-    fn predeclareNodeResults(self: *LowerCtx, node: mlir.MLNode) !void {
-        if (node.meta.result_count == 0) return;
-
+    fn predeclareResults(self: *LowerCtx, inst: mlir.MLInst) !void {
         var i: u32 = 0;
-        while (i < @as(u32, node.meta.result_count)) : (i += 1) {
-            const ml_value = node.meta.result_start + i;
-            if (self.value_slots.get(ml_value) != null) continue;
+        while (i < inst.result_count) : (i += 1) {
+            const value_id = inst.result_start + i;
+            if (self.value_slots.get(value_id) != null) continue;
             const slot = try self.mod.addValue(.none);
-            try self.value_slots.put(ml_value, slot);
+            try self.value_slots.put(value_id, slot);
         }
     }
 
-    fn assignPrimaryResult(self: *LowerCtx, node: mlir.MLNode, value: llir.LLValue) !void {
-        if (node.meta.result_count == 0) return;
-        const ml_value = node.meta.result_start;
-        const slot = self.value_slots.get(ml_value) orelse return LowerError.MissingResultSlot;
+    fn assignPrimaryResult(self: *LowerCtx, inst: mlir.MLInst, value: llir.LLValue) !void {
+        if (inst.result_count == 0) return;
+        const slot = self.value_slots.get(inst.result_start) orelse return LowerError.MissingResultSlot;
         self.mod.values.items[slot.value] = value;
     }
 
-    fn getValue(self: *LowerCtx, value: mlir.MLValueID) !llir.LLValueID {
-        if (self.value_slots.get(value.value)) |id| return id;
-        const slot = try self.mod.addValue(.none);
-        try self.value_slots.put(value.value, slot);
-        return slot;
+    fn getValue(self: *LowerCtx, value_id: mlir.MLValueID) !llir.LLValueID {
+        if (self.value_slots.get(value_id.value)) |id| return id;
+
+        const value = self.ml_graph.values.items[value_id.value];
+        switch (value.kind) {
+            .constant => {
+                const ty = try self.getType(value.type_);
+                const slot = try self.mod.addValue(.{
+                    .const_ = .{
+                        .ty = ty,
+                        .value = .{ .int = value.literal.?.value },
+                    },
+                });
+                try self.value_slots.put(value_id.value, slot);
+                return slot;
+            },
+            .symbol => {
+                const gid = try self.getGlobal(value.symbol.?);
+                const slot = try self.mod.addValue(.{ .global = .{ .id = gid } });
+                try self.value_slots.put(value_id.value, slot);
+                return slot;
+            },
+            .block_param => {
+                const slot = try self.mod.addValue(.{ .arg = .{ .index = 0 } });
+                try self.value_slots.put(value_id.value, slot);
+                return slot;
+            },
+            .inst_result => return LowerError.MissingResultSlot,
+        }
     }
 
     fn getType(self: *LowerCtx, ty: mlir.MLTypeID) !llir.LLTypeID {
         if (self.type_map.get(ty.value)) |mapped| return mapped;
-        // MLIR currently has no shared type table in MLGraph; use i64 default.
-        try self.type_map.put(ty.value, self.ty_i64);
-        return self.ty_i64;
+
+        const mapped = switch (ty.value) {
+            0 => self.ty_void,
+            1 => self.ty_i1,
+            2 => self.ty_i64,
+            3 => self.ty_ptr,
+            else => self.ty_i64,
+        };
+
+        try self.type_map.put(ty.value, mapped);
+        return mapped;
     }
 
     fn getBlock(self: *LowerCtx, b: mlir.MLBlockID) !llir.LLBlockID {
@@ -145,25 +172,19 @@ const LowerCtx = struct {
 };
 
 pub fn lowerMLtoLL(ml_graph: *const mlir.MLGraph) !llir.LLModule {
-    var ctx = try LowerCtx.init(ml_graph.gpa);
+    var ctx = try LowerCtx.init(ml_graph);
     errdefer ctx.mod.deinit();
     defer ctx.deinit();
 
-    // Pass 1: reserve LL value slots for every ML node result.
-    for (ml_graph.nodes.items) |node| {
-        try ctx.predeclareNodeResults(node);
+    for (ml_graph.insts.items) |inst| {
+        try ctx.predeclareResults(inst);
     }
 
-    // Pass 2: lower node payloads.
-    for (ml_graph.nodes.items) |node| {
-        switch (node.data) {
-            .arg => |a| {
-                try ctx.assignPrimaryResult(node, .{ .arg = .{ .index = a.index } });
-            },
+    for (ml_graph.insts.items) |inst| {
+        switch (inst.data) {
             .const_ => |c| {
                 const ty = try ctx.getType(c.type_);
-                // MLGraph currently stores literal IDs only; keep id as integer payload for now.
-                try ctx.assignPrimaryResult(node, .{
+                try ctx.assignPrimaryResult(inst, .{
                     .const_ = .{
                         .ty = ty,
                         .value = .{ .int = c.lit.value },
@@ -172,11 +193,11 @@ pub fn lowerMLtoLL(ml_graph: *const mlir.MLGraph) !llir.LLModule {
             },
             .load => |n| {
                 const ptr = try ctx.getValue(n.addr);
-                const inst = try ctx.appendInst(.{ .load = .{ .ptr = ptr } }, .{
+                const ll_inst = try ctx.appendInst(.{ .load = .{ .ptr = ptr } }, .{
                     .result_ty = ctx.ty_i64,
                     .effects = .{ .reads_mem = true },
                 });
-                try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
             },
             .store => |n| {
                 const ptr = try ctx.getValue(n.addr);
@@ -188,84 +209,119 @@ pub fn lowerMLtoLL(ml_graph: *const mlir.MLGraph) !llir.LLModule {
             },
             .addr_of => |n| {
                 const gid = try ctx.getGlobal(n.sym);
-                try ctx.assignPrimaryResult(node, .{ .global = .{ .id = gid } });
+                try ctx.assignPrimaryResult(inst, .{ .global = .{ .id = gid } });
             },
             .index_addr => |n| {
                 const base = try ctx.getValue(n.base);
                 const idx = try ctx.getValue(n.index);
-                const inst = try ctx.appendInst(.{ .gep = .{
+                const ll_inst = try ctx.appendInst(.{ .gep = .{
                     .base_ptr = base,
                     .index = idx,
                 } }, .{
                     .result_ty = ctx.ty_ptr,
                 });
-                try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
             },
             .cast => |n| {
                 const in_v = try ctx.getValue(n.value);
                 const to_ty = try ctx.getType(n.to_type);
-                const inst = try ctx.appendInst(.{ .cast = .{
+                const ll_inst = try ctx.appendInst(.{ .cast = .{
                     .op = .bitcast,
                     .value = in_v,
                     .to_ty = to_ty,
                 } }, .{
                     .result_ty = to_ty,
                 });
-                try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            },
+            .unary => |n| {
+                const zero = try ctx.mod.addValue(.{
+                    .const_ = .{
+                        .ty = ctx.ty_i64,
+                        .value = .{ .int = 0 },
+                    },
+                });
+                const operand = try ctx.getValue(n.value);
+                const ll_inst = switch (n.op) {
+                    .ineg => try ctx.appendInst(.{ .binary = .{
+                        .op = .sub,
+                        .lhs = zero,
+                        .rhs = operand,
+                    } }, .{ .result_ty = ctx.ty_i64 }),
+                    .bnot => try ctx.appendInst(.{ .binary = .{
+                        .op = .xor_,
+                        .lhs = operand,
+                        .rhs = try ctx.mod.addValue(.{
+                            .const_ = .{
+                                .ty = ctx.ty_i64,
+                                .value = .{ .int = std.math.maxInt(u64) },
+                            },
+                        }),
+                    } }, .{ .result_ty = ctx.ty_i64 }),
+                    .fneg => try ctx.appendInst(.{ .binary = .{
+                        .op = .sub,
+                        .lhs = zero,
+                        .rhs = operand,
+                    } }, .{ .result_ty = ctx.ty_i64 }),
+                };
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
             },
             .binary => |n| {
                 const lhs = try ctx.getValue(n.left);
                 const rhs = try ctx.getValue(n.right);
-                const inst = try ctx.appendInst(.{ .binary = .{
+                const ll_inst = try ctx.appendInst(.{ .binary = .{
                     .op = mapBinaryOp(n.op),
                     .lhs = lhs,
                     .rhs = rhs,
                 } }, .{
                     .result_ty = ctx.ty_i64,
                 });
-                try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
             },
             .cmp => |n| {
                 const lhs = try ctx.getValue(n.left);
                 const rhs = try ctx.getValue(n.right);
-                const inst = try ctx.appendInst(.{ .icmp = .{
+                const ll_inst = try ctx.appendInst(.{ .icmp = .{
                     .op = mapCmpOp(n.op),
                     .lhs = lhs,
                     .rhs = rhs,
                 } }, .{
                     .result_ty = ctx.ty_i1,
                 });
-                try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
             },
             .select => |n| {
                 const cond = try ctx.getValue(n.cond);
                 const tv = try ctx.getValue(n.then_value);
                 const ev = try ctx.getValue(n.else_value);
-                const inst = try ctx.appendInst(.{ .select = .{
+                const ll_inst = try ctx.appendInst(.{ .select = .{
                     .cond = cond,
                     .then_v = tv,
                     .else_v = ev,
                 } }, .{
                     .result_ty = ctx.ty_i64,
                 });
-                try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
             },
             .call => |n| {
-                const gid = try ctx.getGlobal(.{ .value = n.callee.value });
-                const callee = try ctx.mod.addValue(.{ .global = .{ .id = gid } });
-                // TODO: MLGraph needs explicit argument storage to keep arg list here.
-                const inst = try ctx.appendInst(.{ .call = .{
+                const callee = try ctx.getValue(n.callee);
+                const args = ml_graph.call_args.items[n.arg_start .. n.arg_start + n.arg_count];
+                const arg_start: u32 = @intCast(ctx.mod.call_args.items.len);
+                for (args) |arg| {
+                    try ctx.mod.call_args.append(ctx.mod.gpa, try ctx.getValue(arg));
+                }
+                const ll_inst = try ctx.appendInst(.{ .call = .{
                     .callee = callee,
-                    .arg_start = 0,
-                    .arg_count = 0,
+                    .arg_start = arg_start,
+                    .arg_count = @intCast(args.len),
                 } }, .{
-                    .result_ty = if (node.meta.result_count > 0) ctx.ty_i64 else null,
+                    .result_ty = if (inst.result_count > 0) ctx.ty_i64 else null,
                     .effects = .{ .reads_mem = true, .writes_mem = true, .has_io = true },
                 });
-                try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
             },
             .ret => |n| {
-                const rv = if (n.value) |v| try ctx.getValue(v) else null;
+                const rv = if (n.value) |value| try ctx.getValue(value) else null;
                 _ = try ctx.appendInst(.{ .ret = .{ .value = rv } }, .{ .result_ty = null });
             },
             .br => |n| {
@@ -284,20 +340,14 @@ pub fn lowerMLtoLL(ml_graph: *const mlir.MLGraph) !llir.LLModule {
             },
             .alloc_stack => |n| {
                 const ty = try ctx.getType(n.type_);
-                const inst = try ctx.appendInst(.{ .alloca = .{ .ty = ty } }, .{
+                const ll_inst = try ctx.appendInst(.{ .alloca = .{ .ty = ty } }, .{
                     .result_ty = ctx.ty_ptr,
                     .effects = .{ .writes_mem = true },
                 });
-                try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
+                try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
             },
-
-            .region, .block, .func, .extern_func, .switch_, .phi, .unary, .alloc_heap, .free, .loop_, .aggregate_make, .extract, .insert, .global => {
+            .alloc_heap, .free, .loop_, .aggregate_make, .extract, .insert, .global, .extern_func, .switch_, .phi => {
                 @panic("unimplemented");
-
-                //const inst = try ctx.appendInst(.{ .nop = {} }, .{
-                //    .result_ty = if (node.meta.result_count > 0) ctx.ty_i64 else null,
-                //});
-                //try ctx.assignPrimaryResult(node, .{ .inst = .{ .id = inst } });
             },
         }
     }
@@ -318,8 +368,6 @@ fn mapBinaryOp(op: mlir.BinaryOp) llir.LLBinaryOp {
         .shl => .shl,
         .lshr => .lshr,
         .ashr => .ashr,
-
-        // Float ops currently lowered to integer fallback ops.
         .fadd => .add,
         .fsub => .sub,
         .fmul => .mul,

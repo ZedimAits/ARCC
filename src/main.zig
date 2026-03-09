@@ -95,6 +95,9 @@ pub fn main(init: std.process.Init) !void {
     //########## mlir
 
     var mlirGraph = try tinyc.lowerHLtoML(&hlirTree);
+    defer mlirGraph.deinit();
+    _ = try stdout_writer.write("\n\n");
+    try mlirGraph.writeTo(stdout_writer);
     //mlirGraph = mlirGraph.optimise();
 
     //var llirList = mlirGraph.lower();

@@ -10,20 +10,57 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
+const std = @import("std");
 const front = @import("../../frontend/front.zig");
 const types = @import("../type.zig");
 
-pub const MLNodeID = struct { value: u32 };
+pub const MLTypeID = types.TypeID;
 
+pub const MLInstID = struct { value: u32 };
+pub const MLNodeID = MLInstID;
 pub const MLValueID = struct { value: u32 };
-pub const MLValue = struct { data: union(enum) {
-    runtime: MLNodeID,
-    comptime_: front.LiteralID,
-}, type: types.TypeID };
-
+pub const MLUseID = struct { value: u32 };
 pub const MLBlockID = struct { value: u32 };
 pub const MLRegionID = struct { value: u32 };
+pub const MLFuncID = struct { value: u32 };
 pub const MLSymbolID = struct { value: u32 };
+
+pub const MLValueKind = enum {
+    inst_result,
+    block_param,
+    constant,
+    symbol,
+};
+
+pub const MLValue = struct {
+    kind: MLValueKind,
+    type_: MLTypeID,
+    def_inst: ?MLInstID = null,
+    owner_block: ?MLBlockID = null,
+    literal: ?front.LiteralID = null,
+    symbol: ?MLSymbolID = null,
+    use_head: ?MLUseID = null,
+};
+
+pub const MLUse = struct {
+    user: MLInstID,
+    operand_index: u16,
+    next: ?MLUseID = null,
+};
+
+pub const EffectFlags = packed struct(u8) {
+    reads_mem: bool = false,
+    writes_mem: bool = false,
+    has_io: bool = false,
+    is_volatile: bool = false,
+    _pad: u4 = 0,
+};
+
+pub const MLInstMeta = struct {
+    span: front.Span,
+    effects: EffectFlags = .{},
+    scope: u32 = 0,
+};
 
 pub const UnaryOp = enum {
     ineg,
@@ -64,24 +101,9 @@ pub const CmpOp = enum {
     fge,
 };
 
-pub const Region = struct {
-    entry: MLBlockID,
-};
-
-pub const Block = struct {
-    first: ?MLNodeID,
-    count: u32,
-};
-
-pub const Arg = struct {
-    block: MLBlockID,
-    index: u16,
-    type_: types.TypeID,
-};
-
 pub const Const = struct {
     lit: front.LiteralID,
-    type_: types.TypeID,
+    type_: MLTypeID,
 };
 
 pub const Load = struct {
@@ -104,7 +126,7 @@ pub const IndexAddr = struct {
 
 pub const Cast = struct {
     value: MLValueID,
-    to_type: types.TypeID,
+    to_type: MLTypeID,
 };
 
 pub const Unary = struct {
@@ -131,7 +153,7 @@ pub const Select = struct {
 };
 
 pub const Call = struct {
-    callee: MLSymbolID,
+    callee: MLValueID,
     arg_start: u32,
     arg_count: u16,
 };
@@ -165,11 +187,11 @@ pub const Phi = struct {
 };
 
 pub const AllocStack = struct {
-    type_: types.TypeID,
+    type_: MLTypeID,
 };
 
 pub const AllocHeap = struct {
-    type_: types.TypeID,
+    type_: MLTypeID,
     count: MLValueID,
 };
 
@@ -185,7 +207,7 @@ pub const Loop = struct {
 pub const AggregateMake = struct {
     elem_start: u32,
     elem_count: u16,
-    type_: types.TypeID,
+    type_: MLTypeID,
 };
 
 pub const Extract = struct {
@@ -201,19 +223,82 @@ pub const Insert = struct {
 
 pub const Global = struct {
     sym: MLSymbolID,
-    type_: types.TypeID,
+    type_: MLTypeID,
     init: ?MLValueID,
-};
-
-pub const Func = struct {
-    sym: MLSymbolID,
-    region: MLRegionID,
-    param_start: u32,
-    param_count: u16,
+    is_const: bool = false,
 };
 
 pub const ExternFunc = struct {
     sym: MLSymbolID,
-    param_start: u32,
-    param_count: u16,
+    type_: MLTypeID,
+};
+
+pub const MLInstData = union(enum) {
+    const_: Const,
+    load: Load,
+    store: Store,
+    addr_of: AddrOf,
+    index_addr: IndexAddr,
+    cast: Cast,
+    unary: Unary,
+    binary: Binary,
+    cmp: Cmp,
+    select: Select,
+    call: Call,
+    ret: Ret,
+    br: Br,
+    cond_br: CondBr,
+    switch_: Switch,
+    phi: Phi,
+    alloc_stack: AllocStack,
+    alloc_heap: AllocHeap,
+    free: Free,
+    loop_: Loop,
+    aggregate_make: AggregateMake,
+    extract: Extract,
+    insert: Insert,
+    global: Global,
+    extern_func: ExternFunc,
+};
+
+pub const MLInst = struct {
+    id: MLInstID,
+    kind: std.meta.Tag(MLInstData),
+    parent_block: MLBlockID,
+    prev: ?MLInstID = null,
+    next: ?MLInstID = null,
+    meta: MLInstMeta,
+    data: MLInstData,
+    result_start: u32 = 0,
+    result_count: u8 = 0,
+};
+
+pub const MLBlock = struct {
+    parent_region: MLRegionID,
+    first_inst: ?MLInstID = null,
+    last_inst: ?MLInstID = null,
+    param_start: u32 = 0,
+    param_count: u16 = 0,
+};
+
+pub const MLRegion = struct {
+    entry: MLBlockID,
+    block_start: u32,
+    block_count: u32,
+};
+
+pub const MLFunction = struct {
+    name: []const u8,
+    region: MLRegionID,
+    ret_type: MLTypeID,
+};
+
+pub const MLPhiIncoming = struct {
+    block: MLBlockID,
+    value: MLValueID,
+};
+
+pub const MLSwitchCase = struct {
+    value: u64,
+    target: MLBlockID,
 };

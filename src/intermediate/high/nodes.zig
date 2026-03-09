@@ -39,17 +39,20 @@ pub const Block = struct {
 };
 
 // Example: -x
-pub const Unary = struct {
-    // Example: -x
-    expr: HLNodeID,
-};
-
+pub fn UnaryNode(comptime Op: type) type {
+    return struct {
+        op: Op,
+        expr: HLNodeID,
+    };
+}
 // Example: a + b
-pub const Binary = struct {
-    // Example: a + b
-    left: HLNodeID,
-    right: HLNodeID,
-};
+pub fn BinaryNode(comptime Op: type) type {
+    return struct {
+        op: Op,
+        left: HLNodeID,
+        right: HLNodeID,
+    };
+}
 
 // Example: if (a < b) x = 1; else x = 2;
 pub const If = struct {

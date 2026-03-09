@@ -22,12 +22,14 @@ const ast = @import("ast.zig");
 const ASTTree = ast.ASTTree;
 const SpannedASTNode = ast.SpannedASTNode;
 
-const MLGraph = @import("../../intermediate/medium/mlir.zig").MLGraph;
-const MLNode = @import("../../intermediate/medium/mlir.zig").MLNode;
-const MLNodeID = @import("../../intermediate/medium/mlir.zig").MLNodeID;
-const MLNodeData = @import("../../intermediate/medium/mlir.zig").MLNodeData;
-const MLValueID = @import("../../intermediate/medium/mlir.zig").MLValueID;
-const MLValue = @import("../../intermediate/medium/mlir.zig").MLValue;
+const mlir = @import("../../intermediate/medium/mlir.zig");
+const MLGraph = mlir.MLGraph;
+const MLNodeID = mlir.MLNodeID;
+const MLNodeData = mlir.MLNodeData;
+const MLValueID = mlir.MLValueID;
+const MLTypeID = mlir.MLTypeID;
+const MLBlockID = mlir.MLBlockID;
+const MLRegionID = mlir.MLRegionID;
 const MLNodes = @import("../../intermediate/medium/nodes.zig");
 
 const HLNodeKind = enum {
@@ -45,12 +47,23 @@ const HLNodeKind = enum {
     literal,
 };
 
+const BinaryOp = enum {
+    add,
+    mult,
+};
+
+fn convert_HLBinaryOp_MLBinaryOp(hl_op: BinaryOp) MLNodes.BinaryOp {
+    return switch (hl_op) {
+        .add => MLNodes.BinaryOp.iadd,
+        .mult => MLNodes.BinaryOp.imul,
+    };
+}
+
 pub const HLNode = union(HLNodeKind) {
     empty,
     let: nodes.Let,
     assign: nodes.Assign,
-    unary: nodes.Unary,
-    binary: nodes.Binary,
+    binary: nodes.BinaryNode(BinaryOp),
     block: nodes.Block,
     if_: nodes.If,
     while_: nodes.While,
@@ -83,11 +96,6 @@ pub const HLNode = union(HLNodeKind) {
                 try writer.print("assign\n", .{});
                 try tree.writeNodeRecursiveWith(writer, n.target, indent + 1, resolver);
                 try tree.writeNodeRecursiveWith(writer, n.value, indent + 1, resolver);
-            },
-            .unary => |n| {
-                try writeIndent(writer, indent);
-                try writer.print("unary\n", .{});
-                try tree.writeNodeRecursiveWith(writer, n.expr, indent + 1, resolver);
             },
             .binary => |n| {
                 try writeIndent(writer, indent);
@@ -224,20 +232,20 @@ pub fn lowerASTtoHL(ast_tree: *const ASTTree) !HLTree {
 }
 
 pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *HLTree) !HLNodeID {
-    return switch (node.value) {
-        .empty => try tree.add(node.span, .{ .empty = {} }),
-        .unary => |unary| blk: {
+    switch (node.value) {
+        .empty => return try tree.add(node.span, .{ .empty = {} }),
+        .unary => |unary| {
             const expr = try lowerASTNode(ast_tree, ast_tree.get(unary.expr), tree);
-            break :blk try tree.add(node.span, .{ .unary = .{ .expr = expr } });
+            return try tree.add(node.span, .{ .unary = .{ .expr = expr } });
         },
-        .binary => |binary| blk: {
+        .binary => |binary| {
             const left = try lowerASTNode(ast_tree, ast_tree.get(binary.left), tree);
             const right = try lowerASTNode(ast_tree, ast_tree.get(binary.right), tree);
-            break :blk try tree.add(node.span, .{ .binary = .{ .left = left, .right = right } });
+            return try tree.add(node.span, .{ .binary = .{ .left = left, .right = right } });
         },
-        .block => |block| blk: {
+        .block => |block| {
             if (block.count == 0) {
-                break :blk try tree.add(node.span, .{ .empty = {} });
+                return try tree.add(node.span, .{ .empty = {} });
             }
 
             var first: ?HLNodeID = null;
@@ -249,137 +257,286 @@ pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree:
                 if (first == null) first = child;
             }
 
-            break :blk try tree.add(node.span, .{ .block = .{
+            return try tree.add(node.span, .{ .block = .{
                 .start = first.?,
                 .count = block.count,
             } });
         },
-        .if_ => |if_node| blk: {
+        .if_ => |if_node| {
             const cond = try lowerASTNode(ast_tree, ast_tree.get(if_node.cond), tree);
             const then = try lowerASTNode(ast_tree, ast_tree.get(if_node.then), tree);
             const else_ = if (if_node.else_) |else_id|
                 try lowerASTNode(ast_tree, ast_tree.get(else_id), tree)
             else
                 null;
-            break :blk try tree.add(node.span, .{ .if_ = .{
+            return try tree.add(node.span, .{ .if_ = .{
                 .cond = cond,
                 .then = then,
                 .else_ = else_,
             } });
         },
-        .while_ => |while_node| blk: {
+        .while_ => |while_node| {
             const cond = try lowerASTNode(ast_tree, ast_tree.get(while_node.cond), tree);
             const body = try lowerASTNode(ast_tree, ast_tree.get(while_node.body), tree);
-            break :blk try tree.add(node.span, .{ .while_ = .{ .cond = cond, .body = body } });
+            return try tree.add(node.span, .{ .while_ = .{ .cond = cond, .body = body } });
         },
-        .do_while => |do_while_node| blk: {
+        .do_while => |do_while_node| {
             const body = try lowerASTNode(ast_tree, ast_tree.get(do_while_node.body), tree);
             const cond = try lowerASTNode(ast_tree, ast_tree.get(do_while_node.cond), tree);
-            break :blk try tree.add(node.span, .{ .do_while = .{ .body = body, .cond = cond } });
+            return try tree.add(node.span, .{ .do_while = .{ .body = body, .cond = cond } });
         },
-        .expr_stmt => |expr_stmt| blk: {
+        .expr_stmt => |expr_stmt| {
             const expr = try lowerASTNode(ast_tree, ast_tree.get(expr_stmt.expr), tree);
-            break :blk try tree.add(node.span, .{ .expr_stmt = .{ .expr = expr } });
+            return try tree.add(node.span, .{ .expr_stmt = .{ .expr = expr } });
         },
-        .assign => |assign| blk: {
+        .assign => |assign| {
             const target = try lowerASTNode(ast_tree, ast_tree.get(assign.left), tree);
             const value = try lowerASTNode(ast_tree, ast_tree.get(assign.right), tree);
-            break :blk try tree.add(node.span, .{ .assign = .{ .target = target, .value = value } });
+            return try tree.add(node.span, .{ .assign = .{ .target = target, .value = value } });
         },
-        .ident => |ident| try tree.add(node.span, .{ .ident = .{
+        .ident => |ident| return try tree.add(node.span, .{ .ident = .{
             .symbol = .{ .value = ident.id.value },
         } }),
-        .literal => |literal| try tree.add(node.span, .{ .literal = .{
+        .literal => |literal| return try tree.add(node.span, .{ .literal = .{
             .literal = literal.id,
         } }),
-    };
+    }
 }
 
 pub fn lowerHLtoML(hl_tree: *const HLTree) !MLGraph {
     var graph = MLGraph.init(hl_tree.gpa);
+    errdefer graph.deinit();
 
-    const items = hl_tree.roots.items;
-    for (items) |root_id| {
-        const hl_node = hl_tree.get(root_id);
-        const ml_node = try lowerHLNode(hl_tree, hl_node, &graph);
-        graph.add(hl_node.span, ml_node);
+    var ctx = LowerCtx.init(hl_tree, &graph);
+    try ctx.initEntry();
+
+    for (hl_tree.roots.items) |root_id| {
+        try ctx.lowerStmt(hl_tree.get(root_id));
     }
+
+    // Terminate the synthetic entry function so the ML graph is structurally complete.
+    _ = try graph.appendInst(ctx.current_block, .{
+        .source_id = 0,
+        .start = 0,
+        .end = 0,
+        .line_start = 0,
+        .col_start = 0,
+        .line_end = 0,
+        .col_end = 0,
+    }, .{ .ret = .{ .value = null } }, null);
 
     return graph;
 }
 
-//TODO:
-//- SymbolIDs -> ValueID in ml_graph einfügen
 pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNodeMeta, ml_graph: *MLGraph) !MLNodeID {
-    switch (node.data) {
-        // .let => |_| {
-        // const let: nodes.Let = let_switch;
-        // const symbol = let.symbol;
-        // const init = hl_tree.get(let.init);
-
-        // gleich wie bei assign??? TODO
-        // },
-        .assign => |assign| {
-            const left = hl_tree.get(assign.target);
-            const right = hl_tree.get(assign.value);
-
-            const left_symbol = switch (left.data) {
-                .ident => |ident| ident.symbol,
-                else => return error.InvalidAssignmentTarget,
-            };
-            const left_value = ml_graph.lookup_symbol(left_symbol) orelse error.SymbolNotFound;
-
-            const right_node = try lowerHLNode(hl_tree, right, ml_graph);
-            const right_value = ml_graph.getNode(right_node).value;
-
-            const assign_node = try ml_graph.add(node.span, .{ .store = .{ .addr = left_value, .value = right_value } });
-
-            return assign_node;
-        },
-        .unary => |unary_switch| {
-            const unary: nodes.Unary = unary_switch;
-            const expr_hl = hl_tree.get(unary.expr);
-
-            const expr_node = try lowerHLNode(hl_tree, expr_hl, ml_graph);
-
-            const unary_op: MLNodes.UnaryOp = .ineg;
-
-            const unary_data: MLNodeData = .{ .unary = .{ .op = unary_op, .value = ml_graph.getNode(expr_node).value } };
-
-            const unary_node = try ml_graph.add(node.span, unary_data);
-
-            ml_graph.connect(expr_node, unary_node);
-
-            return unary_node;
-        },
-        .binary => |binary_switch| {
-            const binary: nodes.Binary = binary_switch;
-
-            //TODO: Add binaryOP to HLIR
-
-            const right = try lowerHLNode(hl_tree, hl_tree.get(binary.right), ml_graph);
-            //TODO: connect right and left
-            const left = try lowerHLNode(hl_tree, hl_tree.get(binary.left), ml_graph);
-
-            const binary_data: MLNodeData = .{ .binary = .{ .op = .iadd, .left = ml_graph.getNode(left).value, .right = ml_graph.getNode(right).value } };
-            const binary_node = try ml_graph.add(node.span, binary_data);
-            ml_graph.connect(left, binary_node);
-
-            return binary_node;
-        },
-        //block: nodes.Block, //TODO
-        .if_ => |if_switch| {
-            const if_: nodes.If = if_switch;
-            const cond_hl = hl_tree.get(if_.cond);
-
-            const cond_node = try lowerHLNode(hl_tree, cond_hl, ml_graph);
-        },
-        //while_: nodes.While,
-        //do_while: nodes.DoWhile,
-        //expr_stmt: nodes.ExprStmt,
-        //ident: nodes.Identifier,
-        //literal: nodes.Literal,
-        //empty,
-        else => return error.UnimplementedHLNode,
-    }
+    var ctx = LowerCtx.init(hl_tree, ml_graph);
+    try ctx.initEntry();
+    const value = try ctx.lowerExpr(node);
+    const load = try ml_graph.appendInst(ctx.current_block, node.span, .{ .cast = .{ .value = value, .to_type = ctx.ty_i64 } }, ctx.ty_i64);
+    return load;
 }
+
+const LowerCtx = struct {
+    hl_tree: *const HLTree,
+    ml_graph: *MLGraph,
+    current_region: MLRegionID = .{ .value = 0 },
+    current_block: MLBlockID = .{ .value = 0 },
+    ty_void: MLTypeID = .{ .value = 0 },
+    ty_i1: MLTypeID = .{ .value = 1 },
+    ty_i64: MLTypeID = .{ .value = 2 },
+    ty_ptr: MLTypeID = .{ .value = 3 },
+
+    fn init(hl_tree: *const HLTree, ml_graph: *MLGraph) LowerCtx {
+        return .{
+            .hl_tree = hl_tree,
+            .ml_graph = ml_graph,
+        };
+    }
+
+    fn initEntry(self: *LowerCtx) !void {
+        self.current_region = try self.ml_graph.addRegion();
+        self.current_block = self.ml_graph.regions.items[self.current_region.value].entry;
+        // The TinyC frontend currently lowers the whole translation unit into one synthetic function.
+        _ = try self.ml_graph.addFunction("tinyc.main", self.current_region, self.ty_void); //TODO  we  want any text for systetic code! nem f functions should be FunctionID -----via----NameMap----> String
+    }
+
+    fn lowerStmt(self: *LowerCtx, node: *const HLNodeMeta) anyerror!void {
+        switch (node.data) {
+            .empty => {},
+            .expr_stmt => |expr| {
+                _ = try self.lowerExpr(self.hl_tree.get(expr.expr));
+            },
+            .literal, .ident, .unary, .binary => {
+                _ = try self.lowerExpr(node);
+            },
+            .let => |let_node| {
+                const init_value = try self.lowerExpr(self.hl_tree.get(let_node.init));
+                const addr = try self.ensureSymbolAddress(let_node.symbol);
+                // Local variables are modeled as addressable storage in ML and materialized with stores/loads.
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .store = .{ .addr = addr, .value = init_value },
+                }, null);
+            },
+            .assign => |assign| {
+                const target = self.hl_tree.get(assign.target);
+                const symbol = switch (target.data) {
+                    .ident => |ident| ident.symbol,
+                    else => return error.InvalidAssignmentTarget,
+                };
+                const addr = try self.ensureSymbolAddress(symbol);
+                const value = try self.lowerExpr(self.hl_tree.get(assign.value));
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .store = .{ .addr = addr, .value = value },
+                }, null);
+            },
+            .block => |block| {
+                for (0..block.count) |i| {
+                    const child_id = HLNodeID{ .value = block.start.value + @as(u32, @intCast(i)) };
+                    try self.lowerStmt(self.hl_tree.get(child_id));
+                }
+            },
+            .if_ => |if_node| {
+                const then_block = try self.ml_graph.addBlock(self.current_region);
+                const else_block = try self.ml_graph.addBlock(self.current_region);
+                const cont_block = try self.ml_graph.addBlock(self.current_region);
+                const cond = try self.lowerExpr(self.hl_tree.get(if_node.cond));
+                // Control flow is made explicit already in ML so later CFG passes work on blocks directly.
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .cond_br = .{
+                        .cond = cond,
+                        .then_target = then_block,
+                        .else_target = if (if_node.else_ != null) else_block else cont_block,
+                    },
+                }, null);
+
+                self.current_block = then_block;
+                try self.lowerStmt(self.hl_tree.get(if_node.then));
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .br = .{ .target = cont_block, .arg_start = 0, .arg_count = 0 },
+                }, null);
+
+                if (if_node.else_) |else_id| {
+                    self.current_block = else_block;
+                    try self.lowerStmt(self.hl_tree.get(else_id));
+                    _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                        .br = .{ .target = cont_block, .arg_start = 0, .arg_count = 0 },
+                    }, null);
+                }
+
+                self.current_block = cont_block;
+            },
+            .while_ => |while_node| {
+                const header_block = try self.ml_graph.addBlock(self.current_region);
+                const body_block = try self.ml_graph.addBlock(self.current_region);
+                const exit_block = try self.ml_graph.addBlock(self.current_region);
+
+                // Lower loops into explicit header/body/exit blocks instead of keeping structured control flow.
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .br = .{ .target = header_block, .arg_start = 0, .arg_count = 0 },
+                }, null);
+
+                self.current_block = header_block;
+                const cond = try self.lowerExpr(self.hl_tree.get(while_node.cond));
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .cond_br = .{
+                        .cond = cond,
+                        .then_target = body_block,
+                        .else_target = exit_block,
+                    },
+                }, null);
+
+                self.current_block = body_block;
+                try self.lowerStmt(self.hl_tree.get(while_node.body));
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .br = .{ .target = header_block, .arg_start = 0, .arg_count = 0 },
+                }, null);
+
+                self.current_block = exit_block;
+            },
+            .do_while => |do_while_node| {
+                const body_block = try self.ml_graph.addBlock(self.current_region);
+                const latch_block = try self.ml_graph.addBlock(self.current_region);
+                const exit_block = try self.ml_graph.addBlock(self.current_region);
+
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .br = .{ .target = body_block, .arg_start = 0, .arg_count = 0 },
+                }, null);
+
+                self.current_block = body_block;
+                try self.lowerStmt(self.hl_tree.get(do_while_node.body));
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .br = .{ .target = latch_block, .arg_start = 0, .arg_count = 0 },
+                }, null);
+
+                self.current_block = latch_block;
+                const cond = try self.lowerExpr(self.hl_tree.get(do_while_node.cond));
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .cond_br = .{
+                        .cond = cond,
+                        .then_target = body_block,
+                        .else_target = exit_block,
+                    },
+                }, null);
+
+                self.current_block = exit_block;
+            },
+        }
+    }
+
+    fn lowerExpr(self: *LowerCtx, node: *const HLNodeMeta) anyerror!MLValueID {
+        switch (node.data) {
+            .literal => |lit| {
+                const inst = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .const_ = .{ .lit = lit.literal, .type_ = self.ty_i64 },
+                }, self.ty_i64);
+                return try self.ml_graph.resultOf(inst);
+            },
+            .ident => |ident| {
+                const addr = try self.ensureSymbolAddress(ident.symbol);
+                // Reading an identifier means loading the current value from its storage slot.
+                const inst = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .load = .{ .addr = addr },
+                }, self.ty_i64);
+                return try self.ml_graph.resultOf(inst);
+            },
+            .unary => |unary| {
+                const value = try self.lowerExpr(self.hl_tree.get(unary.expr));
+                const inst = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .unary = .{ .op = unary.op, .value = value },
+                }, self.ty_i64);
+                return try self.ml_graph.resultOf(inst);
+            },
+            .binary => |binary| {
+                const left = try self.lowerExpr(self.hl_tree.get(binary.left));
+                const right = try self.lowerExpr(self.hl_tree.get(binary.right));
+                const op = convert_HLBinaryOp_MLBinaryOp(binary.op);
+                const inst = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .binary = .{ .op = op, .left = left, .right = right },
+                }, self.ty_i64);
+                return try self.ml_graph.resultOf(inst);
+            },
+            .assign => |assign| {
+                const target = self.hl_tree.get(assign.target);
+                const symbol = switch (target.data) {
+                    .ident => |ident| ident.symbol,
+                    else => return error.InvalidAssignmentTarget,
+                };
+                const addr = try self.ensureSymbolAddress(symbol);
+                const stored = try self.lowerExpr(self.hl_tree.get(assign.value));
+                _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .store = .{ .addr = addr, .value = stored },
+                }, null);
+                const load = try self.ml_graph.appendInst(self.current_block, node.span, .{
+                    .load = .{ .addr = addr },
+                }, self.ty_i64);
+                return try self.ml_graph.resultOf(load);
+            },
+            else => return error.ExpectedExpression,
+        }
+    }
+
+    fn ensureSymbolAddress(self: *LowerCtx, symbol: hlir.SymbolID) !MLValueID {
+        // Symbols are interned as stable address values so repeated accesses share the same storage object.
+        return self.ml_graph.lookup_symbol(symbol) orelse try self.ml_graph.addSymbolValue(symbol, self.ty_ptr);
+    }
+};

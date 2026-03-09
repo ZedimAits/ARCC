@@ -218,21 +218,21 @@ pub const Parser = struct {
         const tok = self.peek();
 
         return switch (tok.value) {
-            .identifier => |id| blk: {
+            .identifier => |id| {
                 _ = self.advance();
-                break :blk self.addNode(tree, tok.span, .{ .ident = .{ .id = id } });
+                return self.addNode(tree, tok.span, .{ .ident = .{ .id = id } });
             },
-            .literal => |id| blk: {
+            .literal => |id| {
                 _ = self.advance();
-                break :blk self.addNode(tree, tok.span, .{ .literal = .{ .id = id } });
+                return self.addNode(tree, tok.span, .{ .literal = .{ .id = id } });
             },
             .symbol => |s| switch (s) {
                 .l_paren => self.parenExpr(tree),
-                .minus => blk: {
+                .minus => {
                     const minus = self.advance();
                     const expr = try self.term(tree);
                     const expr_span = self.spanOfNode(tree, expr);
-                    break :blk self.addNode(tree, self.mergeSpans(minus.span, expr_span), .{ .unary = .{ .op = .neg, .expr = expr } });
+                    return self.addNode(tree, self.mergeSpans(minus.span, expr_span), .{ .unary = .{ .op = .neg, .expr = expr } });
                 },
                 else => ParserError.SyntaxError,
             },

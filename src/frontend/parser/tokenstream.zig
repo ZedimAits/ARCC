@@ -40,7 +40,7 @@ pub fn TokenStream(comptime Lexer: type) type {
 
         fn fill(self: *Self, n: usize) void {
             while (self.buf.items.len <= n) {
-                const t = self.lexer.next() catch blk: {
+                const next_token = self.lexer.next() catch {
                     const err_span: @TypeOf((@as(SpannedToken, undefined)).span) = if (self.lexer.last_error) |diag| diag.span else .{
                         .source_id = 0,
                         .start = 0,
@@ -50,11 +50,13 @@ pub fn TokenStream(comptime Lexer: type) type {
                         .line_end = 1,
                         .col_end = 1,
                     };
-                    break :blk SpannedToken{
+                    self.buf.append(self.alloc, .{
                         .span = err_span,
                         .value = .eof,
-                    };
-                } orelse SpannedToken{
+                    }) catch return;
+                    return;
+                };
+                const t = next_token orelse SpannedToken{
                     .span = .{
                         .source_id = 0,
                         .start = 0,

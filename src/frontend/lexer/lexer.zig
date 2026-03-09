@@ -353,22 +353,22 @@ pub fn Lexer(comptime Lexicon: type) type {
         fn literalFromLexeme(self: *Self, kind: core.LiteralTag, lexeme: []const u8) !core.Literal {
             _ = self;
             return switch (kind) {
-                .int => blk: {
+                .int => {
                     const value = try parseIntLexeme(lexeme);
-                    break :blk .{ .int = .{
+                    return .{ .int = .{
                         .signed = false,
                         .bits = 64,
                         .value = value,
                     } };
                 },
                 .bool => .{ .bool = std.mem.eql(u8, lexeme, "true") },
-                .string => blk: {
+                .string => {
                     if (lexeme.len < 2) return LexerError.InvalidCharacter;
-                    break :blk .{ .string = lexeme[1 .. lexeme.len - 1] };
+                    return .{ .string = lexeme[1 .. lexeme.len - 1] };
                 },
-                .char => blk: {
+                .char => {
                     const c = try parseCharLexeme(lexeme);
-                    break :blk .{ .char = c };
+                    return .{ .char = c };
                 },
                 .null => .null,
                 .float => return LexerError.InvalidCharacter,
