@@ -26,6 +26,9 @@ const MLGraph = @import("../../intermediate/medium/mlir.zig").MLGraph;
 const MLNode = @import("../../intermediate/medium/mlir.zig").MLNode;
 const MLNodeID = @import("../../intermediate/medium/mlir.zig").MLNodeID;
 const MLNodeData = @import("../../intermediate/medium/mlir.zig").MLNodeData;
+const MLValueID = @import("../../intermediate/medium/mlir.zig").MLValueID;
+const MLValue = @import("../../intermediate/medium/mlir.zig").MLValue;
+const MLNodes = @import("../../intermediate/medium/nodes.zig");
 
 const HLNodeKind = enum {
     empty,
@@ -293,65 +296,86 @@ pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree:
 }
 
 pub fn lowerHLtoML(hl_tree: *const HLTree) !MLGraph {
-    const graph = MLGraph.init(hl_tree.gpa);
+    var graph = MLGraph.init(hl_tree.gpa);
 
     const items = hl_tree.roots.items;
     for (items) |root_id| {
         const node = hl_tree.get(root_id);
-        const hl_root = try lowerHLNode(hl_tree, node.data, &graph);
+        const hl_root = try lowerHLNode(hl_tree, node, &graph);
         _ = hl_root;
     }
+
+    return graph;
 }
 
-pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNode, ml_graph: *MLGraph) !MLNodeID {
+//TODO:
+//- SymbolIDs -> ValueID in ml_graph einfügen
+pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNodeMeta, ml_graph: *MLGraph) !MLNodeID {
     switch (node.data) {
-        .let => |let_switch| { // int a = 5;
-            var let: nodes.Let = let_switch;
+        // .let => |_| {
+        // const let: nodes.Let = let_switch;
+        // const symbol = let.symbol;
+        // const init = hl_tree.get(let.init);
 
-            const temp_id = try lowerHLNode(hl_tree, hl_tree.get(let.init), ml_graph);
+        // gleich wie bei assign??? TODO
+        // },
+        .assign => |assign_switch| {
+            const assign: nodes.Assign = assign_switch;
+            const left = hl_tree.get(assign.target);
+            const right = hl_tree.get(assign.value);
 
-            const data: MLNodeData = MLNodeData{ .store = .{ .addr = let.symbol, .value = ml_graph.resultOf(temp_id) catch @panic("init muss value haben") } };
+            const left_symbol = switch (left.data) {
+                .ident => |ident| ident.symbol,
+                else => return error.InvalidAssignmentTarget,
+            };
+            const left_value = ml_graph.lookup_symbol(left_symbol) orelse error.SymbolNotFound;
 
-            ml_graph.add(node.span, data);
+            const right_node = try lowerHLNode(hl_tree, right, ml_graph);
+            const right_value = ml_graph.get(right_node).value;
+
+            const assign_node = try ml_graph.add(node.span, .{ .store = .{ .addr = left_value, .value = right_value } });
+
+            ml_graph.connect(right_node, assign_node);
+
+            return assign_node;
         },
-        .assign => |node_assign_switch| { // a = 5;
-            const node_assign: nodes.Assign = node_assign_switch;
-            const target: HLNodeID = node_assign.target;
-            const value: HLNodeID = node_assign.value;
+        .unary => |unary_switch| {
+            const unary: nodes.Unary = unary_switch;
+            const expr_hl = hl_tree.get(unary.expr);
 
-            const target_id = try lowerHLNode(hl_tree, hl_tree.get(target), ml_graph);
-            const value_id = try lowerHLNode(hl_tree, hl_tree.get(value), ml_graph);
+            const expr_node = try lowerHLNode(hl_tree, expr_hl, ml_graph);
 
-            const data: MLNodeData = .{ .store = .{ .addr = try ml_graph.resultOf(target_id), .value = try ml_graph.resultOf(value_id) } };
-            
-            ml_graph.add(node.span, data);
+            const unary_op: MLNodes.UnaryOp = .ineg;
+
+            const unary_data: MLNodeData = .{ .unary = .{ .op = unary_op, .value = ml_graph.get(expr_node).value } };
+
+            const unary_node = try ml_graph.add(node.span, unary_data);
+
+            ml_graph.connect(expr_node, unary_node);
+
+            return unary_node;
         },
-        //unary: nodes.Unary,
-        //binary: nodes.Binary,
-        //block: nodes.Block,
-        .if_ => |if_while| { //if without assign
-            const if_: nodes.If = if_while;
-            const cond_hl = if_.cond;
-            const then_hl = if_.then;
-            const else_hl = if_.else_;
+        .binary => |binary_switch| {
+            const binary: nodes.Binary = binary_switch;
 
-            //compare => var x
-            const cond = try lowerHLNode(hl_tree, hl_tree.get(cond_hl).data, ml_graph);
-            cond.
+            //TODO: Add binaryOP to HLIR
 
-            //cond branch on x => branch then or else/continue
+            const right = try lowerHLNode(hl_tree, hl_tree.get(binary.right), ml_graph);
+            //TODO: connect right and left
+            const left = try lowerHLNode(hl_tree, hl_tree.get(binary.left), ml_graph);
 
-            //=> then_branch
+            const binary_data: MLNodeData = .{ .binary = .{ .op = .iadd, .left = ml_graph.get(left).value, .right = ml_graph.get(right).value } };
+            const binary_node = try ml_graph.add(node.span, binary_data);
+            ml_graph.connect(left, binary_node);
 
-            //=> ?else_branch
+            return binary_node;
+        },
+        //block: nodes.Block, //TODO
+        .if_ => |if_switch| {
+            const if_: nodes.If = if_switch;
+            const cond_hl = hl_tree.get(if_.cond);
 
-            //phi (then, ?else/continue)
-
-
-
-
-
-
+            const cond_node = try lowerHLNode(hl_tree, cond_hl, ml_graph);
         },
         //while_: nodes.While,
         //do_while: nodes.DoWhile,
@@ -359,8 +383,6 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNode, ml_graph: *MLGra
         //ident: nodes.Identifier,
         //literal: nodes.Literal,
         //empty,
-        else => {},
+        else => return error.UnimplementedHLNode,
     }
 }
-
-fn ml_cmp()

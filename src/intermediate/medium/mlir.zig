@@ -24,6 +24,8 @@ pub const MLRegionID = nodes.MLRegionID;
 pub const MLSymbolID = nodes.MLSymbolID;
 pub const AttrSetID = struct { value: u32 };
 
+const SymbolID = @import("../../intermediate/symbol.zig").SymbolID;
+
 pub const EffectFlags = packed struct(u8) {
     reads_mem: bool = false,
     writes_mem: bool = false,
@@ -84,7 +86,6 @@ pub const MLNode = struct {
     meta: MLNodeMeta,
     data: MLNodeData,
     value: MLValueID,
-    next: MLNodeID,
 };
 
 pub const MLGraph = struct {
@@ -92,15 +93,34 @@ pub const MLGraph = struct {
 
     gpa: std.mem.Allocator,
     nodes: std.ArrayListUnmanaged(MLNode) = .{},
-    values: std.ArrayListUnmanaged(MLValue) = .{},
+    comptime_values: std.ArrayListUnmanaged(MLValue) = .{},
+    symbol_map: std.AutoHashMap(SymbolID, MLValueID) = undefined,
 
     pub fn init(gpa: std.mem.Allocator) Self {
-        return .{ .gpa = gpa };
+        return .{
+            .gpa = gpa,
+            .symbol_map = std.StringHashMap(MLValueID).init(gpa),
+        };
     }
 
     pub fn deinit(self: *Self) void {
         self.nodes.deinit(self.gpa);
-        self.nodes.deinit(self.gpa);
+        self.comptime_values.deinit(self.gpa);
+        self.symbol_map.deinit();
+    }
+
+    pub fn add_symbol(self: *Self, symbol: SymbolID, value: MLValue) !MLValueID {
+        if (self.symbol_map.get(symbol)) |id| return id;
+
+        const id = try self.add_value(value);
+
+        try self.symbol_map.put(symbol, id);
+
+        return id;
+    }
+
+    pub fn lookup_symbol(self: *const Self, symbol: SymbolID) ?MLValueID {
+        return self.symbol_map.get(symbol);
     }
 
     pub fn add(self: *Self, span: Span, data: MLNodeData) !MLNodeID {
@@ -121,13 +141,15 @@ pub const MLGraph = struct {
     }
 
     pub fn add_value(self: *Self, value: MLValue) !MLValueID {
-        const raw_id: u32 = @intCast(self.values.items.len);
+        const raw_id: u32 = @intCast(self.comptime_values.items.len);
         const id = MLValueID{ .value = raw_id };
 
-        try self.nodes.append(self.gpa, value);
+        try self.comptime_values.append(self.gpa, value);
 
         return id;
     }
+
+    pub fn connect_last(self: *Self, )
 
     pub fn get(self: *Self, id: MLNodeID) *MLNode {
         return &self.nodes.items[id.value];
@@ -136,5 +158,9 @@ pub const MLGraph = struct {
     pub fn resultOf(self: *Self, n: MLNodeID) !MLValueID {
         const node = self.get(n);
         return node.meta.result orelse error.NoResult;
+    }
+
+    pub fn connect(self: *Self, prev: MLNodeID, next: MLNodeID) void {
+        self.get(prev).next = next;
     }
 };
