@@ -300,9 +300,9 @@ pub fn lowerHLtoML(hl_tree: *const HLTree) !MLGraph {
 
     const items = hl_tree.roots.items;
     for (items) |root_id| {
-        const node = hl_tree.get(root_id);
-        const hl_root = try lowerHLNode(hl_tree, node, &graph);
-        _ = hl_root;
+        const hl_node = hl_tree.get(root_id);
+        const ml_node = try lowerHLNode(hl_tree, hl_node, &graph);
+        graph.add(hl_node.span, ml_node);
     }
 
     return graph;
@@ -319,8 +319,7 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNodeMeta, ml_graph: *M
 
         // gleich wie bei assign??? TODO
         // },
-        .assign => |assign_switch| {
-            const assign: nodes.Assign = assign_switch;
+        .assign => |assign| {
             const left = hl_tree.get(assign.target);
             const right = hl_tree.get(assign.value);
 
@@ -331,11 +330,9 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNodeMeta, ml_graph: *M
             const left_value = ml_graph.lookup_symbol(left_symbol) orelse error.SymbolNotFound;
 
             const right_node = try lowerHLNode(hl_tree, right, ml_graph);
-            const right_value = ml_graph.get(right_node).value;
+            const right_value = ml_graph.getNode(right_node).value;
 
             const assign_node = try ml_graph.add(node.span, .{ .store = .{ .addr = left_value, .value = right_value } });
-
-            ml_graph.connect(right_node, assign_node);
 
             return assign_node;
         },
@@ -347,7 +344,7 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNodeMeta, ml_graph: *M
 
             const unary_op: MLNodes.UnaryOp = .ineg;
 
-            const unary_data: MLNodeData = .{ .unary = .{ .op = unary_op, .value = ml_graph.get(expr_node).value } };
+            const unary_data: MLNodeData = .{ .unary = .{ .op = unary_op, .value = ml_graph.getNode(expr_node).value } };
 
             const unary_node = try ml_graph.add(node.span, unary_data);
 
@@ -364,7 +361,7 @@ pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNodeMeta, ml_graph: *M
             //TODO: connect right and left
             const left = try lowerHLNode(hl_tree, hl_tree.get(binary.left), ml_graph);
 
-            const binary_data: MLNodeData = .{ .binary = .{ .op = .iadd, .left = ml_graph.get(left).value, .right = ml_graph.get(right).value } };
+            const binary_data: MLNodeData = .{ .binary = .{ .op = .iadd, .left = ml_graph.getNode(left).value, .right = ml_graph.getNode(right).value } };
             const binary_node = try ml_graph.add(node.span, binary_data);
             ml_graph.connect(left, binary_node);
 

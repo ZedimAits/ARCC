@@ -14,11 +14,13 @@ const front = @import("../../frontend/front.zig");
 const types = @import("../type.zig");
 
 pub const MLNodeID = struct { value: u32 };
+
 pub const MLValueID = struct { value: u32 };
 pub const MLValue = struct { data: union(enum) {
     runtime: MLNodeID,
     comptime_: front.LiteralID,
 }, type: types.TypeID };
+
 pub const MLBlockID = struct { value: u32 };
 pub const MLRegionID = struct { value: u32 };
 pub const MLSymbolID = struct { value: u32 };
@@ -74,12 +76,12 @@ pub const Block = struct {
 pub const Arg = struct {
     block: MLBlockID,
     index: u16,
-    type_: MLTypeID,
+    type_: types.TypeID,
 };
 
 pub const Const = struct {
     lit: front.LiteralID,
-    type_: MLTypeID,
+    type_: types.TypeID,
 };
 
 pub const Load = struct {
@@ -102,7 +104,7 @@ pub const IndexAddr = struct {
 
 pub const Cast = struct {
     value: MLValueID,
-    to_type: MLTypeID,
+    to_type: types.TypeID,
 };
 
 pub const Unary = struct {
@@ -163,11 +165,11 @@ pub const Phi = struct {
 };
 
 pub const AllocStack = struct {
-    type_: MLTypeID,
+    type_: types.TypeID,
 };
 
 pub const AllocHeap = struct {
-    type_: MLTypeID,
+    type_: types.TypeID,
     count: MLValueID,
 };
 
@@ -183,7 +185,7 @@ pub const Loop = struct {
 pub const AggregateMake = struct {
     elem_start: u32,
     elem_count: u16,
-    type_: MLTypeID,
+    type_: types.TypeID,
 };
 
 pub const Extract = struct {
@@ -199,7 +201,7 @@ pub const Insert = struct {
 
 pub const Global = struct {
     sym: MLSymbolID,
-    type_: MLTypeID,
+    type_: types.TypeID,
     init: ?MLValueID,
 };
 

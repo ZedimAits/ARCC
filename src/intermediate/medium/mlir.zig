@@ -112,7 +112,7 @@ pub const MLGraph = struct {
     pub fn add_symbol(self: *Self, symbol: SymbolID, value: MLValue) !MLValueID {
         if (self.symbol_map.get(symbol)) |id| return id;
 
-        const id = try self.add_value(value);
+        const id = try self.add_comptime_value(value);
 
         try self.symbol_map.put(symbol, id);
 
@@ -140,7 +140,7 @@ pub const MLGraph = struct {
         return id;
     }
 
-    pub fn add_value(self: *Self, value: MLValue) !MLValueID {
+    pub fn add_comptime_value(self: *Self, value: MLValue) !MLValueID {
         const raw_id: u32 = @intCast(self.comptime_values.items.len);
         const id = MLValueID{ .value = raw_id };
 
@@ -149,18 +149,12 @@ pub const MLGraph = struct {
         return id;
     }
 
-    pub fn connect_last(self: *Self, )
-
-    pub fn get(self: *Self, id: MLNodeID) *MLNode {
+    pub fn getNode(self: *Self, id: MLNodeID) *MLNode {
         return &self.nodes.items[id.value];
     }
 
     pub fn resultOf(self: *Self, n: MLNodeID) !MLValueID {
-        const node = self.get(n);
+        const node = self.getNode(n);
         return node.meta.result orelse error.NoResult;
-    }
-
-    pub fn connect(self: *Self, prev: MLNodeID, next: MLNodeID) void {
-        self.get(prev).next = next;
     }
 };
