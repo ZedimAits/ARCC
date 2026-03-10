@@ -15,6 +15,7 @@ const std = @import("std");
 const front = @import("../../frontend/front.zig");
 const Span = front.Span;
 pub const SymbolID = @import("../symbol.zig").SymbolID;
+pub const SymbolInterner = @import("../symbol.zig").SymbolInterner;
 pub const lower_to_ml = @import("lower_to_ml.zig");
 const types = @import("../type.zig");
 
@@ -60,6 +61,11 @@ pub fn HLTree(comptime HLNode: type) type {
         }
 
         pub fn deinit(self: *Self) void {
+            if (@hasDecl(HLNode, "deinit")) {
+                for (self.nodes.items) |*node| {
+                    node.data.deinit(self.gpa);
+                }
+            }
             self.nodes.deinit(self.gpa);
             self.roots.deinit(self.gpa);
         }

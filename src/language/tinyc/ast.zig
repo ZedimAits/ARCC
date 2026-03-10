@@ -66,10 +66,9 @@ pub const ASTNode = union(ASTNodeKind) {
             },
             .block => |n| {
                 try writeIndent(writer, indent);
-                try writer.print("block(count={d})\n", .{n.count});
-                for (0..n.count) |i| {
-                    const child_id: u32 = n.start.value + @as(u32, @intCast(i));
-                    try tree.writeNodeRecursiveWith(writer, NodeID{ .value = child_id }, indent + 1, resolver);
+                try writer.print("block(count={d})\n", .{n.len()});
+                for (n.items()) |child_id| {
+                    try tree.writeNodeRecursiveWith(writer, NodeID{ .value = child_id.value }, indent + 1, resolver);
                 }
             },
             .if_ => |n| {
@@ -163,6 +162,13 @@ pub const ASTNode = union(ASTNodeKind) {
             .string => |v| try writer.print("string(\"{s}\")", .{v}),
             .char => |v| try writer.print("char({d})", .{v}),
             .null => try writer.print("null", .{}),
+        }
+    }
+
+    pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+        switch (self.*) {
+            .block => |*n| n.deinit(alloc),
+            else => {},
         }
     }
 };

@@ -14,12 +14,14 @@ const std = @import("std");
 const Io = std.Io;
 
 const core = @import("frontend/front.zig");
+const back = @import("backend/back.zig");
+const symbol = @import("intermediate/symbol.zig");
 const type_interner = @import("intermediate/type_interner.zig");
-const linear = @import("intermediate/linear/linear.zig");
 const low = @import("intermediate/low/lower.zig");
 const tinyc = @import("language/tinyc/tinyc.zig");
 
 pub fn main(init: std.process.Init) !void {
+    _ = back;
     //std.debug.print("All your codebase are belong to us.\n", .{});
     //std.debug.print("You have no chance to compile make your time.\n", .{});
 
@@ -37,6 +39,9 @@ pub fn main(init: std.process.Init) !void {
     var literalInterner = core.LiteralInterner.init(arena);
     defer literalInterner.deinit();
 
+    var symbolInterner = symbol.SymbolInterner.init(arena);
+    defer symbolInterner.deinit();
+
     var typeInterner = type_interner.TypeInterner.init(arena);
     defer typeInterner.deinit();
     const builtin_types = try type_interner.BuiltinTypes.intern(&typeInterner);
@@ -44,7 +49,7 @@ pub fn main(init: std.process.Init) !void {
     //########## input handling
 
     const input =
-        \\a = 0;
+        \\a = 0; x = 9;
         \\if (1 < 2) { ; }
         \\while (a < 3) { a = a + 1; b = 1000; }
         \\//a = "sds";
@@ -89,11 +94,11 @@ pub fn main(init: std.process.Init) !void {
 
     //########## hlir
 
-    var hlirTree = try tinyc.lowerASTtoHL(&astTree);
+    var hlirTree = try tinyc.lowerASTtoHL(&astTree, &identInterner, &symbolInterner);
     defer hlirTree.deinit();
 
     const hl_resolver = tinyc.HLPrintResolver{
-        .ident_interner = &identInterner,
+        .symbol_interner = &symbolInterner,
         .literal_interner = &literalInterner,
     };
     try hlirTree.writeToWith(stdout_writer, hl_resolver);
@@ -112,19 +117,20 @@ pub fn main(init: std.process.Init) !void {
 
     //########## llir
 
-    var llirModule = try low.lowerMLtoLL(&mlirGraph, &typeInterner, builtin_types);
+    var llirModule = try low.lowerMLtoLL(&mlirGraph, &typeInterner, &literalInterner, &symbolInterner, builtin_types);
     defer llirModule.deinit();
 
     _ = try stdout_writer.write("\n\n");
     try llirModule.writeTo(stdout_writer);
 
-    //########## linear
+    //########## optional ll debug/interpreter view
 
-    var linearProgram = try linear.linearize(&llirModule);
-    defer linearProgram.deinit();
-
-    _ = try stdout_writer.write("\n\n");
-    try linearProgram.writeTo(&llirModule, stdout_writer);
+    //const ll_debug = @import("intermediate/linear/linear.zig");
+    //var debugView = try ll_debug.debugViewFromLL(&llirModule);
+    //defer debugView.deinit();
+    //
+    //_ = try stdout_writer.write("\n\n");
+    //try debugView.writeTo(&llirModule, stdout_writer);
 
     //const assembly = llirList.lower();
 
@@ -152,15 +158,19 @@ fn dumpTokenStream(
     var current_line: ?usize = null;
     while (true) : (i += 1) {
         const tok = token_stream.advance();
-        const token_line = tok.span.line_start;
-        if (current_line) |line| {
-            if (token_line != line) {
-                try writer.print("\n", .{});
-            } else {
-                try writer.print(" ", .{});
+        if (tok.span) |span| {
+            const token_line = span.line_start;
+            if (current_line) |line| {
+                if (token_line != line) {
+                    try writer.print("\n", .{});
+                } else {
+                    try writer.print(" ", .{});
+                }
             }
+            current_line = token_line;
+        } else if (current_line != null) {
+            try writer.print(" ", .{});
         }
-        current_line = token_line;
 
         try writer.print("{s}", .{tok.value.text()});
 

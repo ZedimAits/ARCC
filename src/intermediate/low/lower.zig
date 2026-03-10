@@ -12,8 +12,10 @@
 
 const std = @import("std");
 
+const front = @import("../../frontend/front.zig");
 const mlir = @import("../medium/mlir.zig");
 const llir = @import("llir.zig");
+const symbol = @import("../symbol.zig");
 const type_interner = @import("../type_interner.zig");
 
 pub const LowerError = error{
@@ -28,8 +30,16 @@ const LowerCtx = struct {
     block_map: std.AutoHashMap(u32, llir.LLBlockID),
     global_map: std.AutoHashMap(u32, llir.LLGlobalID),
     builtins: type_interner.BuiltinTypes,
+    literal_interner: *const front.LiteralInterner,
+    symbol_interner: *const symbol.SymbolInterner,
 
-    fn init(ml_graph: *const mlir.MLGraph, interner: *const type_interner.TypeInterner, builtins: type_interner.BuiltinTypes) !LowerCtx {
+    fn init(
+        ml_graph: *const mlir.MLGraph,
+        interner: *const type_interner.TypeInterner,
+        builtins: type_interner.BuiltinTypes,
+        literal_interner: *const front.LiteralInterner,
+        symbol_interner: *const symbol.SymbolInterner,
+    ) !LowerCtx {
         const m = llir.LLModule.init(ml_graph.gpa, interner);
         return .{
             .ml_graph = ml_graph,
@@ -38,6 +48,8 @@ const LowerCtx = struct {
             .block_map = std.AutoHashMap(u32, llir.LLBlockID).init(ml_graph.gpa),
             .global_map = std.AutoHashMap(u32, llir.LLGlobalID).init(ml_graph.gpa),
             .builtins = builtins,
+            .literal_interner = literal_interner,
+            .symbol_interner = symbol_interner,
         };
     }
 
@@ -48,39 +60,49 @@ const LowerCtx = struct {
     }
 
     fn predeclareResults(self: *LowerCtx, inst: mlir.MLInst) !void {
-        var i: u32 = 0;
-        while (i < inst.result_count) : (i += 1) {
-            const value_id = inst.result_start + i;
+        for (inst.results.items) |result_id| {
+            const value_id = result_id.value;
             if (self.value_slots.get(value_id) != null) continue;
-            const slot = try self.mod.addValue(.none);
+            const slot = try self.mod.addVirtualValue();
             try self.value_slots.put(value_id, slot);
         }
     }
 
     fn assignPrimaryResult(self: *LowerCtx, inst: mlir.MLInst, value: llir.LLValue) !void {
-        if (inst.result_count == 0) return;
-        const slot = self.value_slots.get(inst.result_start) orelse return LowerError.MissingResultSlot;
+        if (inst.results.items.len == 0) return;
+        const slot = self.value_slots.get(inst.results.items[0].value) orelse return LowerError.MissingResultSlot;
         self.mod.values.items[slot.value] = value;
+        if (value == .vreg) {
+            if (value.vreg.def_inst) |def_inst| {
+                self.mod.insts.items[def_inst.value].meta.result_value = slot;
+            }
+        }
     }
 
     fn getValue(self: *LowerCtx, value_id: mlir.MLValueID) !llir.LLValueID {
         if (self.value_slots.get(value_id.value)) |id| return id;
 
         const value = self.ml_graph.values.items[value_id.value];
-        switch (value.kind) {
-            .constant => {
+        switch (value.data) {
+            .constant => |constant| {
                 const ty = try self.getType(value.type_);
+                const lit = self.literal_interner.get(constant.literal) orelse return error.UnknownLiteral;
                 const slot = try self.mod.addValue(.{
                     .const_ = .{
                         .ty = ty,
-                        .value = .{ .int = value.literal.?.value },
+                        .value = switch (lit) {
+                            .int => |v| .{ .int = v.value },
+                            .bool => |v| .{ .bool = v },
+                            .null => .null,
+                            else => return error.UnsupportedLiteralKind,
+                        },
                     },
                 });
                 try self.value_slots.put(value_id.value, slot);
                 return slot;
             },
-            .symbol => {
-                const gid = try self.getGlobal(value.symbol.?);
+            .symbol => |sym| {
+                const gid = try self.getGlobal(sym.symbol);
                 const slot = try self.mod.addValue(.{ .global = .{ .id = gid } });
                 try self.value_slots.put(value_id.value, slot);
                 return slot;
@@ -103,18 +125,17 @@ const LowerCtx = struct {
         return self.block_map.get(b.value) orelse {
             const fresh = try self.mod.addBlock(.{
                 .label = null,
-                .inst_start = 0,
-                .inst_count = 0,
             });
             try self.block_map.put(b.value, fresh);
             return fresh;
         };
     }
 
-    fn getGlobal(self: *LowerCtx, sym: mlir.MLSymbolID) !llir.LLGlobalID {
+    fn getGlobal(self: *LowerCtx, sym: mlir.SymbolID) !llir.LLGlobalID {
         if (self.global_map.get(sym.value)) |mapped| return mapped;
         const gid = try self.mod.addGlobal(.{
-            .name = "",
+            .symbol = sym,
+            .name_cache = self.symbol_interner.get(sym),
             .ty = self.builtins.ptr,
             .init = null,
             .is_const = false,
@@ -125,49 +146,43 @@ const LowerCtx = struct {
 
     fn appendInst(self: *LowerCtx, block: llir.LLBlockID, data: llir.LLInstData, meta: llir.LLInstMeta) !llir.LLInstID {
         var ll_block = &self.mod.blocks.items[block.value];
-        if (ll_block.inst_count == 0) {
-            ll_block.inst_start = @intCast(self.mod.insts.items.len);
-        }
-
         const id = try self.mod.addInst(data, meta);
-        ll_block.inst_count += 1;
+        try ll_block.insts.append(self.mod.gpa, id);
         return id;
     }
 
     fn predeclareFunctionsAndBlocks(self: *LowerCtx) !void {
         for (self.ml_graph.funcs.items) |ml_func| {
             const region = self.ml_graph.regions.items[ml_func.region.value];
-            const block_start: u32 = @intCast(self.mod.blocks.items.len);
-            const region_end = region.block_start + region.block_count;
-
-            var block_index = region.block_start;
-            while (block_index < region_end) : (block_index += 1) {
-                const ml_block: mlir.MLBlockID = .{ .value = @intCast(block_index) };
-                const ll_block = try self.mod.addBlock(.{
-                    .label = null,
-                    .inst_start = 0,
-                    .inst_count = 0,
-                });
-                try self.block_map.put(ml_block.value, ll_block);
-            }
-
-            const entry = try self.getBlock(region.entry);
             const ret_ty = try self.getType(ml_func.ret_type);
-            _ = try self.mod.addFunction(.{
+            const func_id = try self.mod.addFunction(.{
                 .name = ml_func.name,
                 .ty = ret_ty,
-                .entry = entry,
-                .block_start = block_start,
-                .block_count = region.block_count,
-                .arg_start = 0,
-                .arg_count = 0,
+                .entry = undefined,
             });
+            var ll_func = &self.mod.funcs.items[func_id.value];
+
+            for (region.blocks.items) |ml_block| {
+                const ll_block = try self.mod.addBlock(.{
+                    .label = null,
+                });
+                try self.block_map.put(ml_block.value, ll_block);
+                try ll_func.blocks.append(self.mod.gpa, ll_block);
+            }
+
+            ll_func.entry = try self.getBlock(region.entry);
         }
     }
 };
 
-pub fn lowerMLtoLL(ml_graph: *const mlir.MLGraph, interner: *const type_interner.TypeInterner, builtins: type_interner.BuiltinTypes) !llir.LLModule {
-    var ctx = try LowerCtx.init(ml_graph, interner, builtins);
+pub fn lowerMLtoLL(
+    ml_graph: *const mlir.MLGraph,
+    interner: *const type_interner.TypeInterner,
+    literal_interner: *const front.LiteralInterner,
+    symbol_interner: *const symbol.SymbolInterner,
+    builtins: type_interner.BuiltinTypes,
+) !llir.LLModule {
+    var ctx = try LowerCtx.init(ml_graph, interner, builtins, literal_interner, symbol_interner);
     errdefer ctx.mod.deinit();
     defer ctx.deinit();
 
@@ -179,10 +194,7 @@ pub fn lowerMLtoLL(ml_graph: *const mlir.MLGraph, interner: *const type_interner
 
     for (ml_graph.funcs.items) |ml_func| {
         const region = ml_graph.regions.items[ml_func.region.value];
-        const region_end = region.block_start + region.block_count;
-        var block_index = region.block_start;
-        while (block_index < region_end) : (block_index += 1) {
-            const ml_block_id: mlir.MLBlockID = .{ .value = @intCast(block_index) };
+        for (region.blocks.items) |ml_block_id| {
             const ll_block_id = try ctx.getBlock(ml_block_id);
             const ml_block = ml_graph.blocks.items[ml_block_id.value];
 
@@ -215,7 +227,7 @@ fn lowerInst(ctx: *LowerCtx, ll_block_id: llir.LLBlockID, inst: mlir.MLInst) !vo
                 .result_ty = ctx.builtins.i64,
                 .effects = .{ .reads_mem = true },
             });
-            try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            try ctx.assignPrimaryResult(inst, .{ .vreg = .{ .def_inst = ll_inst } });
         },
         .store => |n| {
             const ptr = try ctx.getValue(n.addr);
@@ -238,7 +250,7 @@ fn lowerInst(ctx: *LowerCtx, ll_block_id: llir.LLBlockID, inst: mlir.MLInst) !vo
             } }, .{
                 .result_ty = ctx.builtins.ptr,
             });
-            try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            try ctx.assignPrimaryResult(inst, .{ .vreg = .{ .def_inst = ll_inst } });
         },
         .cast => |n| {
             const in_v = try ctx.getValue(n.value);
@@ -250,7 +262,7 @@ fn lowerInst(ctx: *LowerCtx, ll_block_id: llir.LLBlockID, inst: mlir.MLInst) !vo
             } }, .{
                 .result_ty = to_ty,
             });
-            try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            try ctx.assignPrimaryResult(inst, .{ .vreg = .{ .def_inst = ll_inst } });
         },
         .unary => |n| {
             const zero = try ctx.mod.addValue(.{
@@ -282,7 +294,7 @@ fn lowerInst(ctx: *LowerCtx, ll_block_id: llir.LLBlockID, inst: mlir.MLInst) !vo
                     .rhs = operand,
                 } }, .{ .result_ty = ctx.builtins.i64 }),
             };
-            try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            try ctx.assignPrimaryResult(inst, .{ .vreg = .{ .def_inst = ll_inst } });
         },
         .binary => |n| {
             const lhs = try ctx.getValue(n.left);
@@ -294,7 +306,7 @@ fn lowerInst(ctx: *LowerCtx, ll_block_id: llir.LLBlockID, inst: mlir.MLInst) !vo
             } }, .{
                 .result_ty = ctx.builtins.i64,
             });
-            try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            try ctx.assignPrimaryResult(inst, .{ .vreg = .{ .def_inst = ll_inst } });
         },
         .cmp => |n| {
             const lhs = try ctx.getValue(n.left);
@@ -306,24 +318,23 @@ fn lowerInst(ctx: *LowerCtx, ll_block_id: llir.LLBlockID, inst: mlir.MLInst) !vo
             } }, .{
                 .result_ty = ctx.builtins.i1,
             });
-            try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            try ctx.assignPrimaryResult(inst, .{ .vreg = .{ .def_inst = ll_inst } });
         },
         .call => |n| {
             const callee = try ctx.getValue(n.callee);
-            const args = ctx.ml_graph.call_args.items[n.arg_start .. n.arg_start + n.arg_count];
-            const arg_start: u32 = @intCast(ctx.mod.call_args.items.len);
-            for (args) |arg| {
-                try ctx.mod.call_args.append(ctx.mod.gpa, try ctx.getValue(arg));
+            var ll_call_args = std.ArrayListUnmanaged(llir.LLValueID){};
+            errdefer ll_call_args.deinit(ctx.mod.gpa);
+            for (n.args.items) |arg| {
+                try ll_call_args.append(ctx.mod.gpa, try ctx.getValue(arg));
             }
             const ll_inst = try ctx.appendInst(ll_block_id, .{ .call = .{
                 .callee = callee,
-                .arg_start = arg_start,
-                .arg_count = @intCast(args.len),
+                .args = ll_call_args,
             } }, .{
-                .result_ty = if (inst.result_count > 0) ctx.builtins.i64 else null,
+                .result_ty = if (inst.results.items.len > 0) ctx.builtins.i64 else null,
                 .effects = .{ .reads_mem = true, .writes_mem = true, .has_io = true },
             });
-            try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            try ctx.assignPrimaryResult(inst, .{ .vreg = .{ .def_inst = ll_inst } });
         },
         .ret => |n| {
             const rv = if (n.value) |value| try ctx.getValue(value) else null;
@@ -349,7 +360,7 @@ fn lowerInst(ctx: *LowerCtx, ll_block_id: llir.LLBlockID, inst: mlir.MLInst) !vo
                 .result_ty = ctx.builtins.ptr,
                 .effects = .{ .writes_mem = true },
             });
-            try ctx.assignPrimaryResult(inst, .{ .inst = .{ .id = ll_inst } });
+            try ctx.assignPrimaryResult(inst, .{ .vreg = .{ .def_inst = ll_inst } });
         },
         .select,
         .alloc_heap,

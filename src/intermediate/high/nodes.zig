@@ -16,6 +16,7 @@ const hlir = @import("hlir.zig");
 const HLNodeID = hlir.HLNodeID;
 const SymbolID = hlir.SymbolID;
 const LiteralID = @import("../../frontend/front.zig").LiteralID;
+const shared_block = @import("../../shared/block.zig");
 
 // Example: let x = 1;
 pub const Let = struct {
@@ -32,11 +33,7 @@ pub const Assign = struct {
 };
 
 // Example: { a = 1; b = 2; }
-pub const Block = struct {
-    // Example: { stmt1; stmt2; }
-    start: HLNodeID,
-    count: usize,
-};
+pub const Block = shared_block.Block(HLNodeID);
 
 // Example: -x
 pub fn UnaryNode(comptime Op: type) type {

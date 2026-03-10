@@ -40,8 +40,11 @@ pub const TypeInterner = struct {
                 },
                 .function => |v| {
                     h.update(std.mem.asBytes(&v.ret.value));
-                    h.update(std.mem.asBytes(&v.param_start));
-                    h.update(std.mem.asBytes(&v.param_count));
+                    const param_count: u32 = @intCast(v.params.items.len);
+                    h.update(std.mem.asBytes(&param_count));
+                    for (v.params.items) |param| {
+                        h.update(std.mem.asBytes(&param.value));
+                    }
                     const variadic: u8 = @intFromBool(v.variadic);
                     h.update(&.{variadic});
                     const cc: u8 = @intCast(@intFromEnum(v.cc));
@@ -73,9 +76,11 @@ pub const TypeInterner = struct {
                 },
                 .function => |v| {
                     const w = b.function;
+                    if (v.params.items.len != w.params.items.len) return false;
+                    for (v.params.items, w.params.items) |lhs, rhs| {
+                        if (lhs.value != rhs.value) return false;
+                    }
                     return v.ret.value == w.ret.value and
-                        v.param_start == w.param_start and
-                        v.param_count == w.param_count and
                         v.variadic == w.variadic and
                         v.cc == w.cc;
                 },
@@ -93,6 +98,12 @@ pub const TypeInterner = struct {
     }
 
     pub fn deinit(self: *TypeInterner) void {
+        for (self.types.items) |*t| {
+            switch (t.*) {
+                .function => |*f| f.deinit(self.gpa),
+                else => {},
+            }
+        }
         self.types.deinit(self.gpa);
         self.map.deinit(self.gpa);
     }
@@ -107,7 +118,13 @@ pub const TypeInterner = struct {
     }
 
     pub fn intern(self: *TypeInterner, t: typ.Type) !typ.TypeID {
-        if (self.map.get(t)) |id| return id;
+        if (self.map.get(t)) |id| {
+            switch (t) {
+                .function => |v| v.deinit(self.gpa),
+                else => {},
+            }
+            return id;
+        }
 
         const id: typ.TypeID = .{ .value = @intCast(self.types.items.len) };
         if (id.value == std.math.maxInt(u32))

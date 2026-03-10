@@ -16,10 +16,10 @@ pub const prep_for_ll = @import("prep_for_ll.zig");
 const front = @import("../../frontend/front.zig");
 const Span = front.Span;
 const nodes = @import("nodes.zig");
+const types = @import("../type.zig");
 
-pub const MLTypeID = nodes.MLTypeID;
+pub const MLTypeID = types.TypeID;
 pub const MLInstID = nodes.MLInstID;
-pub const MLNodeID = nodes.MLNodeID;
 pub const MLValueID = nodes.MLValueID;
 pub const MLUseID = nodes.MLUseID;
 pub const MLValue = nodes.MLValue;
@@ -27,24 +27,19 @@ pub const MLUse = nodes.MLUse;
 pub const MLBlockID = nodes.MLBlockID;
 pub const MLRegionID = nodes.MLRegionID;
 pub const MLFuncID = nodes.MLFuncID;
-pub const MLSymbolID = nodes.MLSymbolID;
+pub const SymbolID = nodes.SymbolID;
 pub const MLInstMeta = nodes.MLInstMeta;
-pub const MLNodeMeta = MLInstMeta;
 pub const EffectFlags = nodes.EffectFlags;
 pub const UnaryOp = nodes.UnaryOp;
 pub const BinaryOp = nodes.BinaryOp;
 pub const CmpOp = nodes.CmpOp;
 pub const MLInstData = nodes.MLInstData;
-pub const MLNodeData = MLInstData;
 pub const MLInst = nodes.MLInst;
-pub const MLNode = MLInst;
 pub const MLBlock = nodes.MLBlock;
 pub const MLRegion = nodes.MLRegion;
 pub const MLFunction = nodes.MLFunction;
 pub const MLPhiIncoming = nodes.MLPhiIncoming;
 pub const MLSwitchCase = nodes.MLSwitchCase;
-
-const SymbolID = @import("../../intermediate/symbol.zig").SymbolID;
 
 pub const MLGraph = struct {
     const Self = @This();
@@ -62,12 +57,6 @@ pub const MLGraph = struct {
     blocks: std.ArrayListUnmanaged(MLBlock) = .{},
     regions: std.ArrayListUnmanaged(MLRegion) = .{},
     funcs: std.ArrayListUnmanaged(MLFunction) = .{},
-    block_params: std.ArrayListUnmanaged(MLValueID) = .{},
-    call_args: std.ArrayListUnmanaged(MLValueID) = .{},
-    branch_args: std.ArrayListUnmanaged(MLValueID) = .{},
-    switch_cases: std.ArrayListUnmanaged(MLSwitchCase) = .{},
-    phi_incoming: std.ArrayListUnmanaged(MLPhiIncoming) = .{},
-    aggregate_elems: std.ArrayListUnmanaged(MLValueID) = .{},
     symbol_map: std.AutoHashMap(SymbolID, MLValueID) = undefined,
 
     pub fn init(gpa: std.mem.Allocator) Self {
@@ -78,18 +67,21 @@ pub const MLGraph = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        for (self.insts.items) |*inst| {
+            inst.deinit(self.gpa);
+        }
+        for (self.blocks.items) |*block| {
+            block.deinit(self.gpa);
+        }
+        for (self.regions.items) |*region| {
+            region.deinit(self.gpa);
+        }
         self.values.deinit(self.gpa);
         self.uses.deinit(self.gpa);
         self.insts.deinit(self.gpa);
         self.blocks.deinit(self.gpa);
         self.regions.deinit(self.gpa);
         self.funcs.deinit(self.gpa);
-        self.block_params.deinit(self.gpa);
-        self.call_args.deinit(self.gpa);
-        self.branch_args.deinit(self.gpa);
-        self.switch_cases.deinit(self.gpa);
-        self.phi_incoming.deinit(self.gpa);
-        self.aggregate_elems.deinit(self.gpa);
         self.symbol_map.deinit();
     }
 
@@ -97,7 +89,7 @@ pub const MLGraph = struct {
         return prep_for_ll.validateReadyForLL(self);
     }
 
-    pub fn add_symbol(self: *Self, symbol: SymbolID, value: MLValue) !MLValueID {
+    pub fn addSymbol(self: *Self, symbol: SymbolID, value: MLValue) !MLValueID {
         if (self.symbol_map.get(symbol)) |id| return id;
 
         const id = try self.appendRawValue(value);
@@ -106,34 +98,24 @@ pub const MLGraph = struct {
     }
 
     pub fn addSymbolValue(self: *Self, symbol: SymbolID, type_: MLTypeID) !MLValueID {
-        return self.add_symbol(symbol, .{
-            .kind = .symbol,
-            .type_ = type_,
-            .symbol = .{ .value = symbol.value },
-        });
+        return self.addSymbol(symbol, MLValue.symbol(type_, symbol));
     }
 
-    pub fn lookup_symbol(self: *const Self, symbol: SymbolID) ?MLValueID {
+    pub fn lookupSymbol(self: *const Self, symbol: SymbolID) ?MLValueID {
         return self.symbol_map.get(symbol);
     }
 
     pub fn addConstant(self: *Self, literal: front.LiteralID, type_: MLTypeID) !MLValueID {
-        return self.appendRawValue(.{
-            .kind = .constant,
-            .type_ = type_,
-            .literal = literal,
-        });
+        return self.appendRawValue(MLValue.constant(type_, literal));
     }
 
     pub fn addRegion(self: *Self) !MLRegionID {
-        const block = try self.addBlock(.{ .value = 0 });
         const id = MLRegionID{ .value = @intCast(self.regions.items.len) };
-        self.blocks.items[block.value].parent_region = id;
         try self.regions.append(self.gpa, .{
-            .entry = block,
-            .block_start = block.value,
-            .block_count = 1,
+            .entry = undefined,
         });
+        const block = try self.addBlock(id);
+        self.regions.items[id.value].entry = block;
         return id;
     }
 
@@ -144,7 +126,7 @@ pub const MLGraph = struct {
         });
 
         if (region.value < self.regions.items.len) {
-            self.regions.items[region.value].block_count += 1;
+            try self.regions.items[region.value].blocks.append(self.gpa, id);
         }
 
         return id;
@@ -171,30 +153,9 @@ pub const MLGraph = struct {
     }
 
     pub fn addBlockParam(self: *Self, block: MLBlockID, type_: MLTypeID) !MLValueID {
-        const id = try self.appendRawValue(.{
-            .kind = .block_param,
-            .type_ = type_,
-            .owner_block = block,
-        });
-        var blk = &self.blocks.items[block.value];
-        if (blk.param_count == 0) {
-            blk.param_start = @intCast(self.block_params.items.len);
-        }
-        try self.block_params.append(self.gpa, id);
-        blk.param_count += 1;
+        const id = try self.appendRawValue(MLValue.blockParam(type_, block));
+        try self.blocks.items[block.value].params.append(self.gpa, id);
         return id;
-    }
-
-    pub fn appendCallArgs(self: *Self, args: []const MLValueID) !struct { start: u32, count: u16 } {
-        const start: u32 = @intCast(self.call_args.items.len);
-        try self.call_args.appendSlice(self.gpa, args);
-        return .{ .start = start, .count = @intCast(args.len) };
-    }
-
-    pub fn appendBranchArgs(self: *Self, args: []const MLValueID) !struct { start: u32, count: u16 } {
-        const start: u32 = @intCast(self.branch_args.items.len);
-        try self.branch_args.appendSlice(self.gpa, args);
-        return .{ .start = start, .count = @intCast(args.len) };
     }
 
     pub fn appendInst(
@@ -221,14 +182,12 @@ pub const MLGraph = struct {
         result_types: []const MLTypeID,
     ) !MLInstID {
         const id = MLInstID{ .value = @intCast(self.insts.items.len) };
-        const result_start: u32 = @intCast(self.values.items.len);
+        var result_ids = std.ArrayListUnmanaged(MLValueID){};
+        errdefer result_ids.deinit(self.gpa);
 
         for (result_types) |ty| {
-            _ = try self.appendRawValue(.{
-                .kind = .inst_result,
-                .type_ = ty,
-                .def_inst = id,
-            });
+            const value_id = try self.appendRawValue(MLValue.instResult(ty, id));
+            try result_ids.append(self.gpa, value_id);
         }
 
         const inst = MLInst{
@@ -237,8 +196,7 @@ pub const MLGraph = struct {
             .parent_block = block,
             .meta = .{ .span = span },
             .data = data,
-            .result_start = result_start,
-            .result_count = @intCast(result_types.len),
+            .results = result_ids,
         };
 
         try self.insts.append(self.gpa, inst);
@@ -251,18 +209,14 @@ pub const MLGraph = struct {
         return &self.insts.items[id.value];
     }
 
-    pub fn getNode(self: *Self, id: MLNodeID) *MLNode {
-        return self.getInst(id);
-    }
-
     pub fn getValue(self: *Self, id: MLValueID) *MLValue {
         return &self.values.items[id.value];
     }
 
     pub fn resultOf(self: *Self, inst: MLInstID) !MLValueID {
         const node = self.getInst(inst);
-        if (node.result_count == 0) return error.NoResult;
-        return .{ .value = node.result_start };
+        if (node.results.items.len == 0) return error.NoResult;
+        return node.results.items[0];
     }
 
     pub fn writeTo(self: *const Self, writer: *std.Io.Writer) anyerror!void {
@@ -283,10 +237,8 @@ pub const MLGraph = struct {
             });
 
             const region = self.regions.items[func.region.value];
-            const region_end = region.block_start + region.block_count;
-            var block_index = region.block_start;
-            while (block_index < region_end) : (block_index += 1) {
-                try self.writeBlock(writer, .{ .value = @intCast(block_index) });
+            for (region.blocks.items) |block_id| {
+                try self.writeBlock(writer, block_id);
             }
         }
     }
@@ -359,8 +311,7 @@ pub const MLGraph = struct {
             },
             .call => |n| {
                 try self.addUse(n.callee, inst_id, 0);
-                const args = self.call_args.items[n.arg_start .. n.arg_start + n.arg_count];
-                for (args, 1..) |arg, idx| {
+                for (n.args.items, 1..) |arg, idx| {
                     try self.addUse(arg, inst_id, @intCast(idx));
                 }
             },
@@ -370,16 +321,14 @@ pub const MLGraph = struct {
                 }
             },
             .br => |n| {
-                const args = self.branch_args.items[n.arg_start .. n.arg_start + n.arg_count];
-                for (args, 0..) |arg, idx| {
+                for (n.args.items, 0..) |arg, idx| {
                     try self.addUse(arg, inst_id, @intCast(idx));
                 }
             },
             .cond_br => |n| try self.addUse(n.cond, inst_id, 0),
             .switch_ => |n| try self.addUse(n.scrutinee, inst_id, 0),
             .phi => |n| {
-                const incoming = self.phi_incoming.items[n.incoming_start .. n.incoming_start + n.incoming_count];
-                for (incoming, 0..) |item, idx| {
+                for (n.incoming.items, 0..) |item, idx| {
                     try self.addUse(item.value, inst_id, @intCast(idx));
                 }
             },
@@ -387,8 +336,7 @@ pub const MLGraph = struct {
             .free => |n| try self.addUse(n.ptr, inst_id, 0),
             .loop_ => {},
             .aggregate_make => |n| {
-                const elems = self.aggregate_elems.items[n.elem_start .. n.elem_start + n.elem_count];
-                for (elems, 0..) |elem, idx| {
+                for (n.elems.items, 0..) |elem, idx| {
                     try self.addUse(elem, inst_id, @intCast(idx));
                 }
             },
@@ -443,17 +391,17 @@ pub const MLGraph = struct {
                 if (operand_index == 0) {
                     n.callee = value;
                 } else {
-                    self.call_args.items[n.arg_start + operand_index - 1] = value;
+                    n.args.items[operand_index - 1] = value;
                 }
             },
             .ret => |n| n.value = value,
-            .br => |n| self.branch_args.items[n.arg_start + operand_index] = value,
+            .br => |n| n.args.items[operand_index] = value,
             .cond_br => |n| n.cond = value,
             .switch_ => |n| n.scrutinee = value,
-            .phi => |n| self.phi_incoming.items[n.incoming_start + operand_index].value = value,
+            .phi => |n| n.incoming.items[operand_index].value = value,
             .alloc_heap => |n| n.count = value,
             .free => |n| n.ptr = value,
-            .aggregate_make => |n| self.aggregate_elems.items[n.elem_start + operand_index] = value,
+            .aggregate_make => |n| n.elems.items[operand_index] = value,
             .extract => |n| n.aggregate = value,
             .insert => |n| {
                 if (operand_index == 0) {
@@ -470,52 +418,142 @@ pub const MLGraph = struct {
         const block = self.blocks.items[block_id.value];
         try writer.print("  block[{d}] params={d}\n", .{
             block_id.value,
-            block.param_count,
+            block.params.items.len,
         });
 
         var inst_opt = block.first_inst;
         while (inst_opt) |inst_id| {
             const inst = self.insts.items[inst_id.value];
-            try writer.print("    i{d}", .{inst_id.value});
-            if (inst.result_count > 0) {
-                try writer.print(" ->", .{});
-                var result_index: u32 = 0;
-                while (result_index < inst.result_count) : (result_index += 1) {
-                    try writer.print(" v{d}", .{inst.result_start + result_index});
+            if (inst.results.items.len > 0) {
+                try writer.print("    ", .{});
+                for (inst.results.items, 0..) |result_id, result_index| {
+                    if (result_index > 0) try writer.print(", ", .{});
+                    try writer.print("v{d}", .{result_id.value});
                 }
+                try writer.print(" = ", .{});
+            } else {
+                try writer.print("    ", .{});
             }
-            try writer.print(" = {s}", .{@tagName(inst.kind)});
+            try writer.print("{s}", .{@tagName(inst.kind)});
             try self.writeInstOperands(writer, inst);
             try writer.print("\n", .{});
             inst_opt = inst.next;
         }
     }
 
-    fn writeInstOperands(_: *const Self, writer: *std.Io.Writer, inst: MLInst) anyerror!void {
+    fn writeValueRef(self: *const Self, writer: *std.Io.Writer, value_id: MLValueID) anyerror!void {
+        const value = self.values.items[value_id.value];
+        switch (value.data) {
+            .inst_result => try writer.print("v{d}", .{value_id.value}),
+            .block_param => |param| try writer.print("v{d}:param(b{d})", .{ value_id.value, param.owner_block.value }),
+            .constant => |constant| try writer.print("v{d}:const(lit={d})", .{ value_id.value, constant.literal.value }),
+            .symbol => |sym| try writer.print("v{d}:sym({d})", .{ value_id.value, sym.symbol.value }),
+        }
+    }
+
+    fn writeInstOperands(self: *const Self, writer: *std.Io.Writer, inst: MLInst) anyerror!void {
         switch (inst.data) {
             .const_ => |n| try writer.print("(lit={d}, ty=t{d})", .{ n.lit.value, n.type_.value }),
-            .load => |n| try writer.print("(addr=v{d})", .{n.addr.value}),
-            .store => |n| try writer.print("(addr=v{d}, value=v{d})", .{ n.addr.value, n.value.value }),
+            .load => |n| {
+                try writer.print("(addr=", .{});
+                try self.writeValueRef(writer, n.addr);
+                try writer.print(")", .{});
+            },
+            .store => |n| {
+                try writer.print("(addr=", .{});
+                try self.writeValueRef(writer, n.addr);
+                try writer.print(", value=", .{});
+                try self.writeValueRef(writer, n.value);
+                try writer.print(")", .{});
+            },
             .addr_of => |n| try writer.print("(sym={d})", .{n.sym.value}),
-            .index_addr => |n| try writer.print("(base=v{d}, index=v{d})", .{ n.base.value, n.index.value }),
-            .cast => |n| try writer.print("(value=v{d}, to=t{d})", .{ n.value.value, n.to_type.value }),
-            .unary => |n| try writer.print("(op={s}, value=v{d})", .{ @tagName(n.op), n.value.value }),
-            .binary => |n| try writer.print("(op={s}, left=v{d}, right=v{d})", .{ @tagName(n.op), n.left.value, n.right.value }),
-            .cmp => |n| try writer.print("(op={s}, left=v{d}, right=v{d})", .{ @tagName(n.op), n.left.value, n.right.value }),
-            .select => |n| try writer.print("(cond=v{d}, then=v{d}, else=v{d})", .{ n.cond.value, n.then_value.value, n.else_value.value }),
-            .call => |n| try writer.print("(callee=v{d}, argc={d})", .{ n.callee.value, n.arg_count }),
-            .ret => |n| if (n.value) |value| try writer.print("(value=v{d})", .{value.value}) else try writer.print("()", .{}),
-            .br => |n| try writer.print("(target=b{d}, argc={d})", .{ n.target.value, n.arg_count }),
-            .cond_br => |n| try writer.print("(cond=v{d}, true=b{d}, false=b{d})", .{ n.cond.value, n.then_target.value, n.else_target.value }),
-            .switch_ => |n| try writer.print("(scrutinee=v{d}, default=b{d}, cases={d})", .{ n.scrutinee.value, n.default_target.value, n.case_count }),
-            .phi => |n| try writer.print("(incoming={d})", .{n.incoming_count}),
+            .index_addr => |n| {
+                try writer.print("(base=", .{});
+                try self.writeValueRef(writer, n.base);
+                try writer.print(", index=", .{});
+                try self.writeValueRef(writer, n.index);
+                try writer.print(")", .{});
+            },
+            .cast => |n| {
+                try writer.print("(value=", .{});
+                try self.writeValueRef(writer, n.value);
+                try writer.print(", to=t{d})", .{n.to_type.value});
+            },
+            .unary => |n| {
+                try writer.print("(op={s}, value=", .{@tagName(n.op)});
+                try self.writeValueRef(writer, n.value);
+                try writer.print(")", .{});
+            },
+            .binary => |n| {
+                try writer.print("(op={s}, left=", .{@tagName(n.op)});
+                try self.writeValueRef(writer, n.left);
+                try writer.print(", right=", .{});
+                try self.writeValueRef(writer, n.right);
+                try writer.print(")", .{});
+            },
+            .cmp => |n| {
+                try writer.print("(op={s}, left=", .{@tagName(n.op)});
+                try self.writeValueRef(writer, n.left);
+                try writer.print(", right=", .{});
+                try self.writeValueRef(writer, n.right);
+                try writer.print(")", .{});
+            },
+            .select => |n| {
+                try writer.print("(cond=", .{});
+                try self.writeValueRef(writer, n.cond);
+                try writer.print(", then=", .{});
+                try self.writeValueRef(writer, n.then_value);
+                try writer.print(", else=", .{});
+                try self.writeValueRef(writer, n.else_value);
+                try writer.print(")", .{});
+            },
+            .call => |n| {
+                try writer.print("(callee=", .{});
+                try self.writeValueRef(writer, n.callee);
+                try writer.print(", argc={d})", .{n.args.items.len});
+            },
+            .ret => |n| if (n.value) |value| {
+                try writer.print("(value=", .{});
+                try self.writeValueRef(writer, value);
+                try writer.print(")", .{});
+            } else try writer.print("()", .{}),
+            .br => |n| try writer.print("(target=b{d}, argc={d})", .{ n.target.value, n.args.items.len }),
+            .cond_br => |n| {
+                try writer.print("(cond=", .{});
+                try self.writeValueRef(writer, n.cond);
+                try writer.print(", true=b{d}, false=b{d})", .{ n.then_target.value, n.else_target.value });
+            },
+            .switch_ => |n| {
+                try writer.print("(scrutinee=", .{});
+                try self.writeValueRef(writer, n.scrutinee);
+                try writer.print(", default=b{d}, cases={d})", .{ n.default_target.value, n.cases.items.len });
+            },
+            .phi => |n| try writer.print("(incoming={d})", .{n.incoming.items.len}),
             .alloc_stack => |n| try writer.print("(ty=t{d})", .{n.type_.value}),
-            .alloc_heap => |n| try writer.print("(ty=t{d}, count=v{d})", .{ n.type_.value, n.count.value }),
-            .free => |n| try writer.print("(ptr=v{d})", .{n.ptr.value}),
+            .alloc_heap => |n| {
+                try writer.print("(ty=t{d}, count=", .{n.type_.value});
+                try self.writeValueRef(writer, n.count);
+                try writer.print(")", .{});
+            },
+            .free => |n| {
+                try writer.print("(ptr=", .{});
+                try self.writeValueRef(writer, n.ptr);
+                try writer.print(")", .{});
+            },
             .loop_ => |n| try writer.print("(header=b{d}, body=r{d})", .{ n.header.value, n.body.value }),
-            .aggregate_make => |n| try writer.print("(elems={d}, ty=t{d})", .{ n.elem_count, n.type_.value }),
-            .extract => |n| try writer.print("(aggregate=v{d}, index={d})", .{ n.aggregate.value, n.index }),
-            .insert => |n| try writer.print("(aggregate=v{d}, index={d}, value=v{d})", .{ n.aggregate.value, n.index, n.value.value }),
+            .aggregate_make => |n| try writer.print("(elems={d}, ty=t{d})", .{ n.elems.items.len, n.type_.value }),
+            .extract => |n| {
+                try writer.print("(aggregate=", .{});
+                try self.writeValueRef(writer, n.aggregate);
+                try writer.print(", index={d})", .{n.index});
+            },
+            .insert => |n| {
+                try writer.print("(aggregate=", .{});
+                try self.writeValueRef(writer, n.aggregate);
+                try writer.print(", index={d}, value=", .{n.index});
+                try self.writeValueRef(writer, n.value);
+                try writer.print(")", .{});
+            },
             .global => |n| try writer.print("(sym={d}, ty=t{d})", .{ n.sym.value, n.type_.value }),
             .extern_func => |n| try writer.print("(sym={d}, ty=t{d})", .{ n.sym.value, n.type_.value }),
         }

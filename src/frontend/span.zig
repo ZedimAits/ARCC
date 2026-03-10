@@ -22,7 +22,7 @@ pub const Span = struct {
 
 pub fn Spanned(comptime T: type) type {
     return struct {
-        span: Span,
+        span: ?Span = null,
         value: T,
 
         const Self = @This();

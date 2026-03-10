@@ -10,6 +10,8 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
+const std = @import("std");
+
 pub const TypeID = struct { value: u32 };
 
 pub const CallingConv = enum {
@@ -53,9 +55,13 @@ pub const Type = union(TypeKind) {
     },
     function: struct {
         ret: TypeID,
-        param_start: u32,
-        param_count: u16,
+        params: std.ArrayListUnmanaged(TypeID) = .{},
         variadic: bool = false,
         cc: CallingConv = .c,
+
+        pub fn deinit(self: @This(), gpa: std.mem.Allocator) void {
+            var params = self.params;
+            params.deinit(gpa);
+        }
     },
 };

@@ -13,51 +13,55 @@
 const std = @import("std");
 const llir = @import("../low/llir.zig");
 
-pub const LinearItem = union(enum) {
+// Optional straight-line debug/interpreter view over LLIR.
+// This is not a required pipeline stage for native codegen.
+pub const DebugItem = union(enum) {
     label: llir.LLBlockID,
     inst: llir.LLInstID,
 };
 
-pub const LinearFunction = struct {
+pub const DebugFunction = struct {
     name: []const u8,
-    item_start: u32,
-    item_count: u32,
+    items: std.ArrayListUnmanaged(DebugItem) = .{},
+
+    pub fn deinit(self: *DebugFunction, gpa: std.mem.Allocator) void {
+        self.items.deinit(gpa);
+    }
 };
 
-pub const LinearProgram = struct {
+pub const LLDebugView = struct {
     gpa: std.mem.Allocator,
-    funcs: std.ArrayListUnmanaged(LinearFunction) = .{},
-    items: std.ArrayListUnmanaged(LinearItem) = .{},
+    funcs: std.ArrayListUnmanaged(DebugFunction) = .{},
 
-    pub fn init(gpa: std.mem.Allocator) LinearProgram {
+    pub fn init(gpa: std.mem.Allocator) LLDebugView {
         return .{ .gpa = gpa };
     }
 
-    pub fn deinit(self: *LinearProgram) void {
+    pub fn deinit(self: *LLDebugView) void {
+        for (self.funcs.items) |*func| {
+            func.deinit(self.gpa);
+        }
         self.funcs.deinit(self.gpa);
-        self.items.deinit(self.gpa);
     }
 
-    pub fn writeTo(self: *const LinearProgram, ll_module: *const llir.LLModule, writer: *std.Io.Writer) !void {
-        try writer.print("LINEAR-PROGRAM (funcs={d}, items={d})\n", .{
-            self.funcs.items.len,
-            self.items.items.len,
-        });
+    pub fn writeTo(self: *const LLDebugView, ll_module: *const llir.LLModule, writer: *std.Io.Writer) !void {
+        var total_items: usize = 0;
+        for (self.funcs.items) |func| total_items += func.items.items.len;
+        try writer.print("LL-DEBUG-VIEW (funcs={d}, items={d})\n", .{ self.funcs.items.len, total_items });
 
         for (self.funcs.items, 0..) |func, i| {
             try writer.print("func[{d}] {s}\n", .{ i, func.name });
-            const item_end = func.item_start + func.item_count;
-            var item_index = func.item_start;
-            while (item_index < item_end) : (item_index += 1) {
-                switch (self.items.items[item_index]) {
+            for (func.items.items) |item| {
+                switch (item) {
                     .label => |block_id| try writer.print("  label b{d}\n", .{block_id.value}),
                     .inst => |inst_id| {
                         const inst = ll_module.insts.items[inst_id.value];
-                        try writer.print("  i{d}", .{inst_id.value});
                         if (inst.meta.result_ty != null) {
-                            try writer.print(" -> v{d}", .{inst_id.value});
+                            try writer.print("  v{d} = ", .{inst.meta.result_value.?.value});
+                        } else {
+                            try writer.print("  ", .{});
                         }
-                        try writer.print(" = {s}", .{@tagName(inst.data)});
+                        try writer.print("{s}", .{@tagName(inst.data)});
                         try ll_module.writeInstOperands(writer, inst);
                         try writer.print("\n", .{});
                     },
@@ -67,32 +71,24 @@ pub const LinearProgram = struct {
     }
 };
 
-pub fn linearize(ll_module: *const llir.LLModule) !LinearProgram {
-    var program = LinearProgram.init(ll_module.gpa);
-    errdefer program.deinit();
+pub fn debugViewFromLL(ll_module: *const llir.LLModule) !LLDebugView {
+    var view = LLDebugView.init(ll_module.gpa);
+    errdefer view.deinit();
 
     for (ll_module.funcs.items) |func| {
-        const item_start: u32 = @intCast(program.items.items.len);
-        const block_end = func.block_start + func.block_count;
-        var block_index = func.block_start;
-        while (block_index < block_end) : (block_index += 1) {
-            const block_id: llir.LLBlockID = .{ .value = @intCast(block_index) };
-            try program.items.append(program.gpa, .{ .label = block_id });
+        var debug_func = DebugFunction{ .name = func.name };
+        errdefer debug_func.deinit(view.gpa);
+        for (func.blocks.items) |block_id| {
+            try debug_func.items.append(view.gpa, .{ .label = block_id });
 
             const block = ll_module.blocks.items[block_id.value];
-            const inst_end = block.inst_start + block.inst_count;
-            var inst_index = block.inst_start;
-            while (inst_index < inst_end) : (inst_index += 1) {
-                try program.items.append(program.gpa, .{ .inst = .{ .value = @intCast(inst_index) } });
+            for (block.insts.items) |inst_id| {
+                try debug_func.items.append(view.gpa, .{ .inst = inst_id });
             }
         }
 
-        try program.funcs.append(program.gpa, .{
-            .name = func.name,
-            .item_start = item_start,
-            .item_count = @intCast(program.items.items.len - item_start),
-        });
+        try view.funcs.append(view.gpa, debug_func);
     }
 
-    return program;
+    return view;
 }

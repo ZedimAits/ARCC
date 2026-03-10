@@ -19,7 +19,7 @@ const Span = front.Span;
 const HLNodeID = hlir.HLNodeID;
 const SymbolID = hlir.SymbolID;
 const MLGraph = mlir.MLGraph;
-const MLNodeID = mlir.MLNodeID;
+const MLInstID = mlir.MLInstID;
 const MLValueID = mlir.MLValueID;
 const MLTypeID = mlir.MLTypeID;
 const MLBlockID = mlir.MLBlockID;
@@ -40,7 +40,7 @@ pub fn lowerTreeToML(hl_tree: anytype, builtins: type_interner.BuiltinTypes, ada
     return graph;
 }
 
-pub fn lowerNodeToML(hl_tree: anytype, node: anytype, ml_graph: *MLGraph, builtins: type_interner.BuiltinTypes, adapter: anytype) !MLNodeID {
+pub fn lowerNodeToML(hl_tree: anytype, node: anytype, ml_graph: *MLGraph, builtins: type_interner.BuiltinTypes, adapter: anytype) !MLInstID {
     var ctx = LowerCtx(@TypeOf(hl_tree.*), @TypeOf(adapter)).init(hl_tree, ml_graph, builtins, adapter);
     try ctx.initEntry();
 
@@ -105,8 +105,7 @@ pub fn LowerCtx(comptime HLTreeType: type, comptime AdapterType: type) type {
                     }, null);
                 },
                 .block => |block| {
-                    for (0..block.count) |i| {
-                        const child_id = HLNodeID{ .value = block.start.value + @as(u32, @intCast(i)) };
+                    for (block.items()) |child_id| {
                         try self.lowerStmt(self.hl_tree.get(child_id));
                     }
                 },
@@ -130,14 +129,14 @@ pub fn LowerCtx(comptime HLTreeType: type, comptime AdapterType: type) type {
                     self.current_block = then_block;
                     try self.lowerStmt(self.hl_tree.get(if_node.then));
                     _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
-                        .br = .{ .target = cont_block, .arg_start = 0, .arg_count = 0 },
+                        .br = .{ .target = cont_block },
                     }, null);
 
                     if (if_node.else_) |else_id| {
                         self.current_block = else_block;
                         try self.lowerStmt(self.hl_tree.get(else_id));
                         _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
-                            .br = .{ .target = cont_block, .arg_start = 0, .arg_count = 0 },
+                            .br = .{ .target = cont_block },
                         }, null);
                     }
 
@@ -149,7 +148,7 @@ pub fn LowerCtx(comptime HLTreeType: type, comptime AdapterType: type) type {
                     const exit_block = try self.ml_graph.addBlock(self.current_region);
 
                     _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
-                        .br = .{ .target = header_block, .arg_start = 0, .arg_count = 0 },
+                        .br = .{ .target = header_block },
                     }, null);
 
                     self.current_block = header_block;
@@ -165,7 +164,7 @@ pub fn LowerCtx(comptime HLTreeType: type, comptime AdapterType: type) type {
                     self.current_block = body_block;
                     try self.lowerStmt(self.hl_tree.get(while_node.body));
                     _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
-                        .br = .{ .target = header_block, .arg_start = 0, .arg_count = 0 },
+                        .br = .{ .target = header_block },
                     }, null);
 
                     self.current_block = exit_block;
@@ -176,13 +175,13 @@ pub fn LowerCtx(comptime HLTreeType: type, comptime AdapterType: type) type {
                     const exit_block = try self.ml_graph.addBlock(self.current_region);
 
                     _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
-                        .br = .{ .target = body_block, .arg_start = 0, .arg_count = 0 },
+                        .br = .{ .target = body_block },
                     }, null);
 
                     self.current_block = body_block;
                     try self.lowerStmt(self.hl_tree.get(do_while_node.body));
                     _ = try self.ml_graph.appendInst(self.current_block, node.span, .{
-                        .br = .{ .target = latch_block, .arg_start = 0, .arg_count = 0 },
+                        .br = .{ .target = latch_block },
                     }, null);
 
                     self.current_block = latch_block;

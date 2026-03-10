@@ -26,7 +26,7 @@ const SpannedASTNode = ast.SpannedASTNode;
 
 const mlir = @import("../../intermediate/medium/mlir.zig");
 const MLGraph = mlir.MLGraph;
-const MLNodeID = mlir.MLNodeID;
+const MLInstID = mlir.MLInstID;
 const MLValueID = mlir.MLValueID;
 const MLNodes = @import("../../intermediate/medium/nodes.zig");
 
@@ -127,11 +127,8 @@ pub const HLNode = union(HLNodeKind) {
             },
             .block => |n| {
                 try writeIndent(writer, indent);
-                try writer.print("block(count={d})\n", .{n.count});
-                for (0..n.count) |i| {
-                    const child_id = HLNodeID{
-                        .value = n.start.value + @as(u32, @intCast(i)),
-                    };
+                try writer.print("block(count={d})\n", .{n.len()});
+                for (n.items()) |child_id| {
                     try tree.writeNodeRecursiveWith(writer, child_id, indent + 1, resolver);
                 }
             },
@@ -222,17 +219,24 @@ pub const HLNode = union(HLNodeKind) {
             .null => try writer.print("null", .{}),
         }
     }
+
+    pub fn deinit(self: *@This(), alloc: std.mem.Allocator) void {
+        switch (self.*) {
+            .block => |*n| n.deinit(alloc),
+            else => {},
+        }
+    }
 };
 
 pub const HLTree = hlir.HLTree(HLNode);
 const HLNodeMeta = HLTree.HLNodeMeta;
 
 pub const HLPrintResolver = struct {
-    ident_interner: *const front.IdentInterner,
+    symbol_interner: *const hlir.SymbolInterner,
     literal_interner: *const front.LiteralInterner,
 
     pub fn lookupSymbol(self: @This(), id: hlir.SymbolID) ?[]const u8 {
-        return self.ident_interner.get(.{ .value = id.value });
+        return self.symbol_interner.get(id);
     }
 
     pub fn lookupLiteral(self: @This(), id: front.LiteralID) ?front.Literal {
@@ -240,97 +244,120 @@ pub const HLPrintResolver = struct {
     }
 };
 
-pub fn lowerASTtoHL(ast_tree: *const ASTTree) !HLTree {
+pub fn lowerASTtoHL(
+    ast_tree: *const ASTTree,
+    ident_interner: *const front.IdentInterner,
+    symbol_interner: *hlir.SymbolInterner,
+) !HLTree {
     var tree = HLTree.init(ast_tree.gpa);
     errdefer tree.deinit();
 
     for (0..ast_tree.rootCount()) |i| {
         const root_id = ast_tree.getRoot(i);
-        const hl_root = try lowerASTNode(ast_tree, ast_tree.get(root_id), &tree);
+        const hl_root = try lowerASTNode(ast_tree, ast_tree.get(root_id), &tree, ident_interner, symbol_interner);
         try tree.addRoot(hl_root);
     }
 
     return tree;
 }
 
-pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *HLTree) !HLNodeID {
+pub fn lowerASTNode(
+    ast_tree: *const ASTTree,
+    node: *const SpannedASTNode,
+    tree: *HLTree,
+    ident_interner: *const front.IdentInterner,
+    symbol_interner: *hlir.SymbolInterner,
+) !HLNodeID {
+    const span = node.span orelse syntheticSpan();
     switch (node.value) {
-        .empty => return try tree.add(node.span, .{ .empty = {} }),
+        .empty => return try tree.add(span, .{ .empty = {} }),
         .unary => return error.UnsupportedUnaryOperator,
         .binary => |binary| {
-            const left = try lowerASTNode(ast_tree, ast_tree.get(binary.left), tree);
-            const right = try lowerASTNode(ast_tree, ast_tree.get(binary.right), tree);
-            return try tree.add(node.span, .{ .binary = .{
+            const left = try lowerASTNode(ast_tree, ast_tree.get(binary.left), tree, ident_interner, symbol_interner);
+            const right = try lowerASTNode(ast_tree, ast_tree.get(binary.right), tree, ident_interner, symbol_interner);
+            return try tree.add(span, .{ .binary = .{
                 .op = convert_ASTBinaryOp_HLBinaryOp(binary.op),
                 .left = left,
                 .right = right,
             } });
         },
         .block => |block| {
-            if (block.count == 0) {
-                return try tree.add(node.span, .{ .empty = {} });
+            if (block.len() == 0) {
+                return try tree.add(span, .{ .empty = {} });
             }
 
-            var first: ?HLNodeID = null;
-            for (0..block.count) |i| {
-                const child_ast_id = front.NodeID{
-                    .value = block.start.value + @as(u32, @intCast(i)),
-                };
-                const child = try lowerASTNode(ast_tree, ast_tree.get(child_ast_id), tree);
-                if (first == null) first = child;
+            const block_node = try tree.add(span, .{ .block = nodes.Block.init() });
+            const lowered_block = &tree.getMut(block_node).data.block;
+
+            for (block.items()) |child_ast_id| {
+                const child = try lowerASTNode(ast_tree, ast_tree.get(child_ast_id), tree, ident_interner, symbol_interner);
+                try lowered_block.append(tree.gpa, child);
             }
 
-            return try tree.add(node.span, .{ .block = .{
-                .start = first.?,
-                .count = block.count,
-            } });
+            return block_node;
         },
         .if_ => |if_node| {
-            const cond = try lowerASTNode(ast_tree, ast_tree.get(if_node.cond), tree);
-            const then = try lowerASTNode(ast_tree, ast_tree.get(if_node.then), tree);
+            const cond = try lowerASTNode(ast_tree, ast_tree.get(if_node.cond), tree, ident_interner, symbol_interner);
+            const then = try lowerASTNode(ast_tree, ast_tree.get(if_node.then), tree, ident_interner, symbol_interner);
             const else_ = if (if_node.else_) |else_id|
-                try lowerASTNode(ast_tree, ast_tree.get(else_id), tree)
+                try lowerASTNode(ast_tree, ast_tree.get(else_id), tree, ident_interner, symbol_interner)
             else
                 null;
-            return try tree.add(node.span, .{ .if_ = .{
+            return try tree.add(span, .{ .if_ = .{
                 .cond = cond,
                 .then = then,
                 .else_ = else_,
             } });
         },
         .while_ => |while_node| {
-            const cond = try lowerASTNode(ast_tree, ast_tree.get(while_node.cond), tree);
-            const body = try lowerASTNode(ast_tree, ast_tree.get(while_node.body), tree);
-            return try tree.add(node.span, .{ .while_ = .{ .cond = cond, .body = body } });
+            const cond = try lowerASTNode(ast_tree, ast_tree.get(while_node.cond), tree, ident_interner, symbol_interner);
+            const body = try lowerASTNode(ast_tree, ast_tree.get(while_node.body), tree, ident_interner, symbol_interner);
+            return try tree.add(span, .{ .while_ = .{ .cond = cond, .body = body } });
         },
         .do_while => |do_while_node| {
-            const body = try lowerASTNode(ast_tree, ast_tree.get(do_while_node.body), tree);
-            const cond = try lowerASTNode(ast_tree, ast_tree.get(do_while_node.cond), tree);
-            return try tree.add(node.span, .{ .do_while = .{ .body = body, .cond = cond } });
+            const body = try lowerASTNode(ast_tree, ast_tree.get(do_while_node.body), tree, ident_interner, symbol_interner);
+            const cond = try lowerASTNode(ast_tree, ast_tree.get(do_while_node.cond), tree, ident_interner, symbol_interner);
+            return try tree.add(span, .{ .do_while = .{ .body = body, .cond = cond } });
         },
         .expr_stmt => |expr_stmt| {
-            const expr = try lowerASTNode(ast_tree, ast_tree.get(expr_stmt.expr), tree);
-            return try tree.add(node.span, .{ .expr_stmt = .{ .expr = expr } });
+            const expr = try lowerASTNode(ast_tree, ast_tree.get(expr_stmt.expr), tree, ident_interner, symbol_interner);
+            return try tree.add(span, .{ .expr_stmt = .{ .expr = expr } });
         },
         .assign => |assign| {
-            const target = try lowerASTNode(ast_tree, ast_tree.get(assign.left), tree);
-            const value = try lowerASTNode(ast_tree, ast_tree.get(assign.right), tree);
-            return try tree.add(node.span, .{ .assign = .{ .target = target, .value = value } });
+            const target = try lowerASTNode(ast_tree, ast_tree.get(assign.left), tree, ident_interner, symbol_interner);
+            const value = try lowerASTNode(ast_tree, ast_tree.get(assign.right), tree, ident_interner, symbol_interner);
+            return try tree.add(span, .{ .assign = .{ .target = target, .value = value } });
         },
-        .ident => |ident| return try tree.add(node.span, .{ .ident = .{
-            .symbol = .{ .value = ident.id.value },
-        } }),
-        .literal => |literal| return try tree.add(node.span, .{ .literal = .{
+        .ident => |ident| {
+            const name = ident_interner.get(ident.id) orelse return error.UnknownIdentifierName;
+            const symbol = try symbol_interner.intern(name);
+            return try tree.add(span, .{ .ident = .{
+                .symbol = symbol,
+            } });
+        },
+        .literal => |literal| return try tree.add(span, .{ .literal = .{
             .literal = literal.id,
         } }),
     }
+}
+
+fn syntheticSpan() front.Span {
+    return .{
+        .source_id = 0,
+        .start = 0,
+        .end = 0,
+        .line_start = 1,
+        .col_start = 1,
+        .line_end = 1,
+        .col_end = 1,
+    };
 }
 
 pub fn lowerHLtoML(hl_tree: *const HLTree, builtins: type_interner.BuiltinTypes) !MLGraph {
     return lower_to_ml.lowerTreeToML(hl_tree, builtins, TinyCLowering{});
 }
 
-pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNodeMeta, ml_graph: *MLGraph, builtins: type_interner.BuiltinTypes) !MLNodeID {
+pub fn lowerHLNode(hl_tree: *const HLTree, node: *const HLNodeMeta, ml_graph: *MLGraph, builtins: type_interner.BuiltinTypes) !MLInstID {
     return lower_to_ml.lowerNodeToML(hl_tree, node, ml_graph, builtins, TinyCLowering{});
 }
 
@@ -384,6 +411,6 @@ const TinyCLowering = struct {
     }
 
     pub fn ensureSymbolAddress(ctx: anytype, symbol: hlir.SymbolID) !MLValueID {
-        return ctx.ml_graph.lookup_symbol(symbol) orelse try ctx.ml_graph.addSymbolValue(symbol, ctx.ty_ptr);
+        return ctx.ml_graph.lookupSymbol(symbol) orelse try ctx.ml_graph.addSymbolValue(symbol, ctx.ty_ptr);
     }
 };

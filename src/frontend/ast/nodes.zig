@@ -10,7 +10,10 @@
 // you may not use this file except in compliance with the License.
 // ─────────────────────────────────────────────────────────────────────
 
+const std = @import("std");
+
 const core = @import("../front.zig");
+const shared_block = @import("../../shared/block.zig");
 
 const ASTNodeID = @import("ast.zig").ASTNodeID;
 
@@ -52,10 +55,7 @@ pub const For = struct {
     body: ASTNodeID,
 };
 
-pub const Block = struct {
-    start: ASTNodeID,
-    count: usize,
-};
+pub const Block = shared_block.Block(ASTNodeID);
 
 pub const Call = struct {
     callee: ASTNodeID,

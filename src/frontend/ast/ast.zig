@@ -30,6 +30,15 @@ pub fn ASTTree(comptime Node: type) type {
         }
 
         pub fn deinit(self: *Self) void {
+            if (@hasDecl(InnerNode, "deinit")) {
+                for (self.nodes.items) |*stored| {
+                    if (@hasField(Node, "value")) {
+                        stored.value.deinit(self.gpa);
+                    } else {
+                        stored.deinit(self.gpa);
+                    }
+                }
+            }
             self.nodes.deinit(self.gpa);
             self.roots.deinit(self.gpa);
         }
@@ -50,6 +59,12 @@ pub fn ASTTree(comptime Node: type) type {
         }
 
         pub fn get(self: *const Self, id: ASTNodeID) *const Node {
+            const idx: usize = @intCast(id.value);
+            std.debug.assert(idx < self.nodes.items.len);
+            return &self.nodes.items[idx];
+        }
+
+        pub fn getMut(self: *Self, id: ASTNodeID) *Node {
             const idx: usize = @intCast(id.value);
             std.debug.assert(idx < self.nodes.items.len);
             return &self.nodes.items[idx];
