@@ -36,7 +36,6 @@ const HLNodeKind = enum {
     empty,
     let,
     assign,
-    unary,
     binary,
     block,
     if_,
@@ -50,12 +49,23 @@ const HLNodeKind = enum {
 const BinaryOp = enum {
     add,
     mult,
+    less_than,
 };
+
+fn convert_ASTBinaryOp_HLBinaryOp(ast_op: ast.BinaryOp) BinaryOp {
+    return switch (ast_op) {
+        .add => BinaryOp.add,
+        .mul => BinaryOp.mult,
+        .lt => BinaryOp.less_than,
+        else => unreachable,
+    };
+}
 
 fn convert_HLBinaryOp_MLBinaryOp(hl_op: BinaryOp) MLNodes.BinaryOp {
     return switch (hl_op) {
         .add => MLNodes.BinaryOp.iadd,
         .mult => MLNodes.BinaryOp.imul,
+        .less_than => MLNodes.BinaryOp.less_than,
     };
 }
 
@@ -234,14 +244,10 @@ pub fn lowerASTtoHL(ast_tree: *const ASTTree) !HLTree {
 pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree: *HLTree) !HLNodeID {
     switch (node.value) {
         .empty => return try tree.add(node.span, .{ .empty = {} }),
-        .unary => |unary| {
-            const expr = try lowerASTNode(ast_tree, ast_tree.get(unary.expr), tree);
-            return try tree.add(node.span, .{ .unary = .{ .expr = expr } });
-        },
         .binary => |binary| {
             const left = try lowerASTNode(ast_tree, ast_tree.get(binary.left), tree);
             const right = try lowerASTNode(ast_tree, ast_tree.get(binary.right), tree);
-            return try tree.add(node.span, .{ .binary = .{ .left = left, .right = right } });
+            return try tree.add(node.span, .{ .binary = .{ .op = convert_ASTBinaryOp_HLBinaryOp(binary.op), .left = left, .right = right } });
         },
         .block => |block| {
             if (block.count == 0) {
@@ -300,6 +306,7 @@ pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree:
         .literal => |literal| return try tree.add(node.span, .{ .literal = .{
             .literal = literal.id,
         } }),
+        else => unreachable,
     }
 }
 
@@ -366,7 +373,7 @@ const LowerCtx = struct {
             .expr_stmt => |expr| {
                 _ = try self.lowerExpr(self.hl_tree.get(expr.expr));
             },
-            .literal, .ident, .unary, .binary => {
+            .literal, .ident, .binary => {
                 _ = try self.lowerExpr(node);
             },
             .let => |let_node| {
@@ -496,13 +503,6 @@ const LowerCtx = struct {
                 // Reading an identifier means loading the current value from its storage slot.
                 const inst = try self.ml_graph.appendInst(self.current_block, node.span, .{
                     .load = .{ .addr = addr },
-                }, self.ty_i64);
-                return try self.ml_graph.resultOf(inst);
-            },
-            .unary => |unary| {
-                const value = try self.lowerExpr(self.hl_tree.get(unary.expr));
-                const inst = try self.ml_graph.appendInst(self.current_block, node.span, .{
-                    .unary = .{ .op = unary.op, .value = value },
                 }, self.ty_i64);
                 return try self.ml_graph.resultOf(inst);
             },
