@@ -323,7 +323,6 @@ pub fn lowerASTNode(ast_tree: *const ASTTree, node: *const SpannedASTNode, tree:
         .literal => |literal| return try tree.add(node.span, .{ .literal = .{
             .literal = literal.id,
         } }),
-        else => unreachable,
     }
 }
 

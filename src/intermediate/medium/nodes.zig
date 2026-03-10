@@ -68,7 +68,7 @@ pub const UnaryOp = enum {
     bnot,
 };
 
-pub const BinaryOp = enum { iadd, isub, imul, idiv, imod, fadd, fsub, fmul, fdiv, band, bor, bxor, shl, lshr, ashr, less_than };
+pub const BinaryOp = enum { iadd, isub, imul, idiv, imod, fadd, fsub, fmul, fdiv, band, bor, bxor, shl, lshr, ashr };
 
 pub const CmpOp = enum {
     ieq,
