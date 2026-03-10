@@ -14,6 +14,9 @@ const std = @import("std");
 const Io = std.Io;
 
 const core = @import("frontend/front.zig");
+const type_interner = @import("intermediate/type_interner.zig");
+const linear = @import("intermediate/linear/linear.zig");
+const low = @import("intermediate/low/lower.zig");
 const tinyc = @import("language/tinyc/tinyc.zig");
 
 pub fn main(init: std.process.Init) !void {
@@ -33,6 +36,10 @@ pub fn main(init: std.process.Init) !void {
 
     var literalInterner = core.LiteralInterner.init(arena);
     defer literalInterner.deinit();
+
+    var typeInterner = type_interner.TypeInterner.init(arena);
+    defer typeInterner.deinit();
+    const builtin_types = try type_interner.BuiltinTypes.intern(&typeInterner);
 
     //########## input handling
 
@@ -94,14 +101,30 @@ pub fn main(init: std.process.Init) !void {
 
     //########## mlir
 
-    var mlirGraph = try tinyc.lowerHLtoML(&hlirTree);
+    var mlirGraph = try tinyc.lowerHLtoML(&hlirTree, builtin_types);
     defer mlirGraph.deinit();
+
     _ = try stdout_writer.write("\n\n");
     try mlirGraph.writeTo(stdout_writer);
-    //mlirGraph = mlirGraph.optimise();
 
-    //var llirList = mlirGraph.lower();
-    //llirList.colorRegisters();
+    //try mlirGraph.optimise();
+    try mlirGraph.prepareForLL();
+
+    //########## llir
+
+    var llirModule = try low.lowerMLtoLL(&mlirGraph, &typeInterner, builtin_types);
+    defer llirModule.deinit();
+
+    _ = try stdout_writer.write("\n\n");
+    try llirModule.writeTo(stdout_writer);
+
+    //########## linear
+
+    var linearProgram = try linear.linearize(&llirModule);
+    defer linearProgram.deinit();
+
+    _ = try stdout_writer.write("\n\n");
+    try linearProgram.writeTo(&llirModule, stdout_writer);
 
     //const assembly = llirList.lower();
 

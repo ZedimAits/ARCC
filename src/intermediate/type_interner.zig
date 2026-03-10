@@ -129,3 +129,19 @@ pub const TypeInterner = struct {
         return self.types.items[@intCast(id.value)];
     }
 };
+
+pub const BuiltinTypes = struct {
+    void: typ.TypeID,
+    i1: typ.TypeID,
+    i64: typ.TypeID,
+    ptr: typ.TypeID,
+
+    pub fn intern(interner: *TypeInterner) !BuiltinTypes {
+        return .{
+            .void = try interner.intern(.{ .void = {} }),
+            .i1 = try interner.intern(.{ .int = .{ .bits = 1, .sign = .unsigned } }),
+            .i64 = try interner.intern(.{ .int = .{ .bits = 64, .sign = .signed } }),
+            .ptr = try interner.intern(.{ .ptr = {} }),
+        };
+    }
+};

@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const types = @import("../type.zig");
+const type_interner = @import("../type_interner.zig");
 
 pub const LLTypeID = types.TypeID;
 pub const LLValueID = struct { value: u32 };
@@ -136,12 +137,9 @@ pub const LLInstData = union(enum) {
     binary: struct { op: LLBinaryOp, lhs: LLValueID, rhs: LLValueID }, // integer arithmetic/bitwise op
     icmp: struct { op: LLCmpOp, lhs: LLValueID, rhs: LLValueID }, // integer comparison
     cast: struct { op: LLCastOp, value: LLValueID, to_ty: LLTypeID }, // explicit type conversion
-    select: struct { cond: LLValueID, then_v: LLValueID, else_v: LLValueID }, // ternary value select
-    phi: struct { incoming_start: u32, incoming_count: u16 }, // SSA merge from predecessors
     call: struct { callee: LLValueID, arg_start: u32, arg_count: u16 }, // direct/indirect call
     br: struct { target: LLBlockID }, // unconditional jump
     cond_br: struct { cond: LLValueID, then_blk: LLBlockID, else_blk: LLBlockID }, // conditional jump
-    switch_: struct { value: LLValueID, default_blk: LLBlockID, case_start: u32, case_count: u16 }, // multi-way jump
     ret: struct { value: ?LLValueID = null }, // function return
     unreachable_: void, // proven impossible path
 };
@@ -162,12 +160,14 @@ pub const LLInst = struct {
     data: LLInstData,
 };
 
+// LLIR is the last structured backend IR: module -> functions -> blocks -> instructions.
+// High-level CFG/value ops such as select/switch/phi belong in MLIR and must be removed before LL lowering.
+// Final straight-line emission belongs to a later linearization stage.
 pub const LLModule = struct {
     const Self = @This();
 
     gpa: std.mem.Allocator,
-
-    types: std.ArrayListUnmanaged(LLType) = .{},
+    type_interner: *const type_interner.TypeInterner,
     values: std.ArrayListUnmanaged(LLValue) = .{},
     phi_incoming: std.ArrayListUnmanaged(LLPhiIncoming) = .{},
     switch_cases: std.ArrayListUnmanaged(LLSwitchCase) = .{},
@@ -178,12 +178,14 @@ pub const LLModule = struct {
     blocks: std.ArrayListUnmanaged(LLBlock) = .{},
     insts: std.ArrayListUnmanaged(LLInst) = .{},
 
-    pub fn init(gpa: std.mem.Allocator) Self {
-        return .{ .gpa = gpa };
+    pub fn init(gpa: std.mem.Allocator, interner: *const type_interner.TypeInterner) Self {
+        return .{
+            .gpa = gpa,
+            .type_interner = interner,
+        };
     }
 
     pub fn deinit(self: *Self) void {
-        self.types.deinit(self.gpa);
         self.values.deinit(self.gpa);
         self.phi_incoming.deinit(self.gpa);
         self.switch_cases.deinit(self.gpa);
@@ -192,13 +194,6 @@ pub const LLModule = struct {
         self.funcs.deinit(self.gpa);
         self.blocks.deinit(self.gpa);
         self.insts.deinit(self.gpa);
-    }
-
-    pub fn addType(self: *Self, data: LLType) !LLTypeID {
-        const id = LLTypeID{ .value = @intCast(self.types.items.len) };
-        _ = id;
-        try self.types.append(self.gpa, data);
-        return id;
     }
 
     pub fn addValue(self: *Self, value: LLValue) !LLValueID {
@@ -237,7 +232,7 @@ pub const LLModule = struct {
 
     pub fn writeTo(self: *const Self, writer: *std.Io.Writer) anyerror!void {
         try writer.print("LL-MODULE (types={d}, values={d}, globals={d}, funcs={d}, blocks={d}, insts={d})\n", .{
-            self.types.items.len,
+            self.type_interner.count(),
             self.values.items.len,
             self.globals.items.len,
             self.funcs.items.len,
@@ -252,6 +247,55 @@ pub const LLModule = struct {
                 f.entry.value,
                 f.block_count,
             });
+
+            const block_end = f.block_start + f.block_count;
+            var block_index = f.block_start;
+            while (block_index < block_end) : (block_index += 1) {
+                try self.writeBlock(writer, .{ .value = @intCast(block_index) });
+            }
+        }
+    }
+
+    fn writeBlock(self: *const Self, writer: *std.Io.Writer, block_id: LLBlockID) anyerror!void {
+        const block = self.blocks.items[block_id.value];
+        try writer.print("  block[{d}]\n", .{block_id.value});
+
+        var inst_index = block.inst_start;
+        const inst_end = block.inst_start + block.inst_count;
+        while (inst_index < inst_end) : (inst_index += 1) {
+            const inst = self.insts.items[inst_index];
+            try writer.print("    i{d}", .{inst.id.value});
+            if (inst.meta.result_ty != null) {
+                try writer.print(" -> v{d}", .{inst.id.value});
+            }
+            try writer.print(" = {s}", .{@tagName(inst.data)});
+            try self.writeInstOperands(writer, inst);
+            try writer.print("\n", .{});
+        }
+    }
+
+    pub fn writeInstOperands(self: *const Self, writer: *std.Io.Writer, inst: LLInst) anyerror!void {
+        switch (inst.data) {
+            .nop => try writer.print("()", .{}),
+            .alloca => |n| try writer.print("(ty=t{d})", .{n.ty.value}),
+            .load => |n| try writer.print("(ptr=v{d})", .{n.ptr.value}),
+            .store => |n| try writer.print("(ptr=v{d}, value=v{d})", .{ n.ptr.value, n.value.value }),
+            .gep => |n| try writer.print("(base=v{d}, index=v{d})", .{ n.base_ptr.value, n.index.value }),
+            .binary => |n| try writer.print("(op={s}, lhs=v{d}, rhs=v{d})", .{ @tagName(n.op), n.lhs.value, n.rhs.value }),
+            .icmp => |n| try writer.print("(op={s}, lhs=v{d}, rhs=v{d})", .{ @tagName(n.op), n.lhs.value, n.rhs.value }),
+            .cast => |n| try writer.print("(op={s}, value=v{d}, to=t{d})", .{ @tagName(n.op), n.value.value, n.to_ty.value }),
+            .call => |n| {
+                try writer.print("(callee=v{d}", .{n.callee.value});
+                const args = self.call_args.items[n.arg_start .. n.arg_start + n.arg_count];
+                for (args, 0..) |arg, idx| {
+                    try writer.print(", arg{d}=v{d}", .{ idx, arg.value });
+                }
+                try writer.print(")", .{});
+            },
+            .br => |n| try writer.print("(target=b{d})", .{n.target.value}),
+            .cond_br => |n| try writer.print("(cond=v{d}, true=b{d}, false=b{d})", .{ n.cond.value, n.then_blk.value, n.else_blk.value }),
+            .ret => |n| if (n.value) |value| try writer.print("(value=v{d})", .{value.value}) else try writer.print("()", .{}),
+            .unreachable_ => try writer.print("()", .{}),
         }
     }
 };

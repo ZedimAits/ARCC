@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const std = @import("std");
+pub const prep_for_ll = @import("prep_for_ll.zig");
 
 const front = @import("../../frontend/front.zig");
 const Span = front.Span;
@@ -48,6 +49,12 @@ const SymbolID = @import("../../intermediate/symbol.zig").SymbolID;
 pub const MLGraph = struct {
     const Self = @This();
 
+    pub const FunctionFrame = struct {
+        func: MLFuncID,
+        region: MLRegionID,
+        entry_block: MLBlockID,
+    };
+
     gpa: std.mem.Allocator,
     values: std.ArrayListUnmanaged(MLValue) = .{},
     uses: std.ArrayListUnmanaged(MLUse) = .{},
@@ -84,6 +91,10 @@ pub const MLGraph = struct {
         self.phi_incoming.deinit(self.gpa);
         self.aggregate_elems.deinit(self.gpa);
         self.symbol_map.deinit();
+    }
+
+    pub fn prepareForLL(self: *Self) prep_for_ll.PrepForLLError!void {
+        return prep_for_ll.validateReadyForLL(self);
     }
 
     pub fn add_symbol(self: *Self, symbol: SymbolID, value: MLValue) !MLValueID {
@@ -147,6 +158,16 @@ pub const MLGraph = struct {
             .ret_type = ret_type,
         });
         return id;
+    }
+
+    pub fn addFunctionWithEntry(self: *Self, name: []const u8, ret_type: MLTypeID) !FunctionFrame {
+        const region = try self.addRegion();
+        const func = try self.addFunction(name, region, ret_type);
+        return .{
+            .func = func,
+            .region = region,
+            .entry_block = self.regions.items[region.value].entry,
+        };
     }
 
     pub fn addBlockParam(self: *Self, block: MLBlockID, type_: MLTypeID) !MLValueID {
@@ -485,7 +506,7 @@ pub const MLGraph = struct {
             .call => |n| try writer.print("(callee=v{d}, argc={d})", .{ n.callee.value, n.arg_count }),
             .ret => |n| if (n.value) |value| try writer.print("(value=v{d})", .{value.value}) else try writer.print("()", .{}),
             .br => |n| try writer.print("(target=b{d}, argc={d})", .{ n.target.value, n.arg_count }),
-            .cond_br => |n| try writer.print("(cond=v{d}, then=b{d}, else=b{d})", .{ n.cond.value, n.then_target.value, n.else_target.value }),
+            .cond_br => |n| try writer.print("(cond=v{d}, true=b{d}, false=b{d})", .{ n.cond.value, n.then_target.value, n.else_target.value }),
             .switch_ => |n| try writer.print("(scrutinee=v{d}, default=b{d}, cases={d})", .{ n.scrutinee.value, n.default_target.value, n.case_count }),
             .phi => |n| try writer.print("(incoming={d})", .{n.incoming_count}),
             .alloc_stack => |n| try writer.print("(ty=t{d})", .{n.type_.value}),

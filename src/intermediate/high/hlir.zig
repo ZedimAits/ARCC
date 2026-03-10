@@ -15,6 +15,7 @@ const std = @import("std");
 const front = @import("../../frontend/front.zig");
 const Span = front.Span;
 pub const SymbolID = @import("../symbol.zig").SymbolID;
+pub const lower_to_ml = @import("lower_to_ml.zig");
 const types = @import("../type.zig");
 
 pub const HLNodeID = struct { value: u32 };
